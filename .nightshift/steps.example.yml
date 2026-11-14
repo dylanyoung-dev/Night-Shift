@@ -1,0 +1,77 @@
+# Copy this to .nightshift/steps.yml in the repo your agents work in (not this repo),
+# or build it on the Steps per state page, which writes the same file.
+# Night Shift reads it from there, so steps change through PRs like everything else.
+#
+# Steps come in sets. Each set runs for tickets in any of its states.
+# A state can be in only one set.
+#
+# Variables filled in for each run:
+#   $TICKET   IGN-644                 $ID             ign-644
+#   $BRANCH   Linear's branch name    $BASE           base branch from Settings
+#   $WORKTREE where Night Shift made the worktree (empty in agent mode)
+#   $REPO     repo path from Settings $WORKTREE_MODE  nightshift | agent
+# They are also set as environment variables: NS_TICKET, NS_ID, NS_BRANCH ...
+#
+# trigger: manual (Run steps button on the card) | auto (starts when a ticket is in one of the states)
+# worktree (optional, overrides Settings):
+#   mode: nightshift   Night Shift creates it at `path` before the steps run
+#   mode: agent        Night Shift creates nothing; the agent sets up its own worktree
+#   path: D:/worktrees/$ID   ($REPO $ID $TICKET $BRANCH; relative paths are inside the repo)
+# In agent mode, steps that use $WORKTREE or cwd: worktree are skipped and the rest run in the repo.
+#
+# Step fields:
+#   type:   script (shell command) | claude (shell command, shown as the Claude step) | linear (move the ticket)
+#   run:    the command (script, claude)       moveTo: Linear state name (linear)
+#   cwd:    repo | worktree   (default: worktree once it exists, otherwise repo)
+#   onFail: stop | continue   (default: stop)
+#   only:   nightshift | agent   (run the step only in that worktree mode)
+#
+# Claude steps run headless (claude -p), where Claude can't ask for permission. Anything not
+# pre-allowed is refused, so give each Claude step:
+#   --permission-mode auto                  approve safe actions without asking
+#   --allowedTools mcp__claude_ai_Linear    allow the Linear connector's tools
+# Add more with --allowedTools, or in the repo's .claude/settings.json allow list.
+
+sets:
+  - name: Build steps
+    states: [Ready to Build]
+    trigger: manual
+    # worktree:
+    #   path: D:/worktrees/$ID
+    steps:
+      - name: Create worktree
+        type: script
+        cwd: repo
+        run: git fetch origin $BASE && git worktree add $WORKTREE -b $BRANCH origin/$BASE
+      - name: Install packages
+        type: script
+        only: nightshift
+        run: npm ci
+      - name: Move to Building
+        type: linear
+        moveTo: Building
+        onFail: continue
+      - name: Build
+        type: claude
+        run: claude -p "/build $TICKET" --permission-mode auto --allowedTools mcp__claude_ai_Linear
+      - name: Push branch
+        type: script
+        run: git push -u origin $BRANCH
+      - name: Open draft PR
+        type: script
+        run: gh pr create --draft --base $BASE --fill
+      - name: Move to In Review
+        type: linear
+        moveTo: In Review
+        onFail: continue
+
+  # One set covering two states: review fixes run the same way for both.
+  - name: Review fixes
+    states: [In Review, Spec Review]
+    trigger: manual
+    worktree:
+      mode: agent
+    steps:
+      - name: Fix review comments
+        type: claude
+        run: claude -p "/review-fix $TICKET" --permission-mode auto --allowedTools mcp__claude_ai_Linear
