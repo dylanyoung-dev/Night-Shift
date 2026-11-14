@@ -1,9 +1,11 @@
 import { app } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
+import type { Writable } from 'stream'
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
 import { isAbsolute, join, normalize } from 'path'
-import { DEFAULT_WORKTREE_PATH } from '../shared/types'
+import { DEFAULT_WORKTREE_PATH, isActiveRun } from '../shared/types'
 import type { LinearIssue, Run, RunStep, StepDef, StepSet, WorktreeMode } from '../shared/types'
+import { ClaudeStreamFormatter, needsYou, parseClaudeCommand } from './claudeStream'
 
 const TAIL_CHARS = 20000
 const AUTO_RERUN_HOURS = 12
@@ -17,13 +19,20 @@ export interface RunnerDeps {
   moveIssue(issueId: string, stateName: string): Promise<void>
   onRuns(runs: Run[]): void
   onOutput(runId: string, chunk: string): void
+  onWaiting(run: Run): void // a Claude step needs the person
 }
 
 interface Active {
   run: Run
   def: StepSet
   child?: ChildProcess
+  stdin?: Writable // open while a Claude step runs as a session
   stopRequested?: boolean
+}
+
+// One message into a Claude session (stream-json input).
+function userMessage(text: string): string {
+  return JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n'
 }
 
 export class Runner {
@@ -46,7 +55,37 @@ export class Runner {
   }
 
   isBusy(issueId: string): boolean {
-    return this.runs.some((r) => r.issueId === issueId && (r.status === 'queued' || r.status === 'running'))
+    return this.runs.some((r) => r.issueId === issueId && isActiveRun(r.status))
+  }
+
+  // Sends a message to the Claude step that's running. Claude reads it when its current turn ends.
+  reply(runId: string, text: string): { ok: true } | { error: string } {
+    const a = this.active.get(runId)
+    const msg = text.trim()
+    if (!msg) return { error: 'Type a message first.' }
+    if (!a?.stdin || a.stdin.destroyed) return { error: "This step isn't taking messages. Only Claude steps can, while they run." }
+    a.stdin.write(userMessage(msg))
+    this.log(a.run, `\n▶ You: ${msg.split('\n').join('\n  ')}\n`)
+    if (a.run.status === 'waiting') this.resume(a, 'Sent')
+    return { ok: true }
+  }
+
+  // Ends the Claude session so the run moves on to its next step.
+  finishStep(runId: string): { ok: true } | { error: string } {
+    const a = this.active.get(runId)
+    if (!a?.stdin || a.stdin.destroyed) return { error: "This step isn't a running Claude step." }
+    this.log(a.run, '\nYou finished this step.\n')
+    a.stdin.end()
+    if (a.run.status === 'waiting') this.resume(a, 'Finished')
+    return { ok: true }
+  }
+
+  private resume(a: Active, _why: string): void {
+    a.run.status = 'running'
+    a.run.waiting = null
+    const rs = a.run.steps[a.run.currentStep]
+    if (rs?.status === 'waiting') rs.status = 'running'
+    this.changed()
   }
 
   // True when auto steps already ran for this ticket recently, so polling doesn't loop on it.
@@ -55,7 +94,7 @@ export class Runner {
     return this.runs.some((r) => r.issueId === issueId && r.stepsName === stepsName && r.createdAt > cutoff)
   }
 
-  start(issue: LinearIssue, def: StepSet): Run {
+  start(issue: LinearIssue, def: StepSet, by?: { id: string; name: string }): Run {
     const repo = this.deps.getRepoPath()
     const id = issue.identifier.toLowerCase()
     const runId = `${id}-${Date.now().toString(36)}`
@@ -68,6 +107,7 @@ export class Runner {
       identifier: issue.identifier,
       title: issue.title,
       stepsName: def.name,
+      ...(by ? { startedBy: by.name, automationId: by.id } : {}),
       runner: 'local',
       status: 'queued',
       branch,
@@ -98,6 +138,7 @@ export class Runner {
     const a = this.active.get(runId)
     if (!a) return
     a.stopRequested = true
+    a.stdin?.end()
     if (a.child?.pid) killTree(a.child.pid)
   }
 
@@ -150,7 +191,7 @@ export class Runner {
           rs.command = cmd
           const cwd = this.cwdFor(step, run, worktreeReady)
           this.log(run, `\n▸ ${step.name}\n$ ${cmd}\n  (in ${cwd})\n`)
-          ok = (await this.shell(a, cmd, cwd)) === 0
+          ok = (await this.shell(a, cmd, cwd, step.type === 'claude')) === 0
         }
       } catch (err) {
         this.log(run, `Error: ${(err as Error).message}\n`)
@@ -217,21 +258,77 @@ export class Runner {
     return cmd.replace(/\$(TICKET|ID|BRANCH|BASE|WORKTREE_MODE|WORKTREE|REPO)\b/g, (_, k: string) => v[k])
   }
 
-  private shell(a: Active, cmd: string, cwd: string): Promise<number> {
+  private shell(a: Active, cmd: string, cwd: string, claude = false): Promise<number> {
     return new Promise((resolve) => {
       const env: NodeJS.ProcessEnv = { ...process.env }
       for (const [k, val] of Object.entries(this.vars(a.run))) env[`NS_${k}`] = val
-      // No stdin: steps run unattended, and tools like claude -p otherwise wait for input.
-      const child = spawn(cmd, { cwd, env, shell: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      // A `claude -p "<prompt>"` step runs as a session: the prompt goes in over stdin and stdin
+      // stays open, so the person can reply. Everything else gets no stdin (it runs unattended).
+      const session = claude ? parseClaudeCommand(cmd) : null
+      const command = session
+        ? `claude -p --input-format stream-json --output-format stream-json --verbose ${session.flags}`.trim()
+        : cmd
+      const child = spawn(command, { cwd, env, shell: true, windowsHide: true, stdio: [session ? 'pipe' : 'ignore', 'pipe', 'pipe'] })
       a.child = child
-      child.stdout?.on('data', (d: Buffer) => this.log(a.run, d.toString()))
+      if (session && child.stdin) {
+        a.stdin = child.stdin
+        child.stdin.on('error', () => {
+          /* the process went away; close handles the rest */
+        })
+        child.stdin.write(userMessage(session.prompt))
+        a.run.interactive = true
+        this.changed()
+      }
+      // When Claude ends a turn: wait for the person if it needs them, otherwise end the session.
+      const onResult = (ev: Record<string, any>): void => {
+        if (!session || !a.stdin || a.stdin.destroyed || a.stopRequested) return
+        const reason = needsYou(ev)
+        if (!reason) {
+          a.stdin.end()
+          return
+        }
+        a.run.status = 'waiting'
+        a.run.waiting = { reason, since: Date.now() }
+        const rs = a.run.steps[a.run.currentStep]
+        if (rs) rs.status = 'waiting'
+        this.log(a.run, `\n⏸ Needs you: ${reason}\n  Reply below, or finish the step to carry on.\n`)
+        this.changed()
+        this.deps.onWaiting(a.run)
+      }
+      // Claude steps: turn stream-json events into readable lines, and keep the raw events too.
+      const fmt = claude ? new ClaudeStreamFormatter(cwd) : null
+      const rawFile = a.run.logFile.replace(/\.log$/, '.events.jsonl')
+      child.stdout?.on('data', (d: Buffer) => {
+        const text = d.toString()
+        if (!fmt) return this.log(a.run, text)
+        try {
+          appendFileSync(rawFile, text)
+        } catch {
+          /* best effort */
+        }
+        const out = fmt.feed(text)
+        if (out) this.log(a.run, out)
+        // Act on turn ends only after their summary is in the log, so "Needs you" reads last.
+        for (const ev of fmt.drainResults()) onResult(ev)
+      })
       child.stderr?.on('data', (d: Buffer) => this.log(a.run, d.toString()))
       child.on('error', (err) => {
         this.log(a.run, `Could not start: ${err.message}\n`)
         resolve(1)
       })
       child.on('close', (code) => {
+        const rest = fmt?.flush()
+        if (rest) this.log(a.run, rest)
         a.child = undefined
+        a.stdin = undefined
+        if (a.run.interactive || a.run.status === 'waiting') {
+          a.run.interactive = false
+          if (a.run.status === 'waiting') {
+            a.run.status = 'running'
+            a.run.waiting = null
+          }
+          this.changed()
+        }
         resolve(code ?? 1)
       })
     })
@@ -257,9 +354,11 @@ export class Runner {
       const runs = JSON.parse(readFileSync(join(this.dir, 'runs.json'), 'utf8')) as Run[]
       // Anything still marked active belonged to a previous session of the app.
       for (const r of runs) {
-        if (r.status === 'queued' || r.status === 'running') {
+        if (isActiveRun(r.status)) {
           r.status = 'stopped'
-          r.steps.forEach((s) => s.status === 'running' && (s.status = 'failed'))
+          r.interactive = false
+          r.waiting = null
+          r.steps.forEach((s) => (s.status === 'running' || s.status === 'waiting') && (s.status = 'failed'))
         }
       }
       return runs

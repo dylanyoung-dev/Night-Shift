@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { BoardData, IssueUpdate, LinearIssue, LinearState, Run } from '../../../shared/types'
+import { useMemo, useState } from 'react'
+import { isActiveRun, type BoardData, type IssueUpdate, type LinearIssue, type LinearState, type Run, type StepChoice } from '../../../shared/types'
 import IssueMenu, { type MenuMode } from './IssueMenu'
 import { duration, runColor, runLabel } from '../util'
 import {
@@ -19,8 +19,9 @@ interface Props {
   latestRun: Map<string, Run>
   selectedIssue: string | null
   onSelect(issueId: string): void
-  onStart(issueId: string): void
+  onStart(issueId: string, setName: string): void
   onUpdate(issueId: string, update: IssueUpdate): void
+  setsFor(stateName: string): StepChoice[] // the sets of steps (buttons) for a state
 }
 
 const DRAG_TYPE = 'application/x-nightshift-issue'
@@ -50,7 +51,7 @@ function Card({
   progress,
   run,
   selected,
-  canRun,
+  sets,
   canEstimate,
   onSelect,
   onStart,
@@ -61,13 +62,14 @@ function Card({
   progress: number
   run?: Run
   selected: boolean
-  canRun: boolean
+  sets: StepChoice[]
   canEstimate: boolean
   onSelect(): void
-  onStart(): void
+  onStart(setName: string): void
   onMenu(mode: MenuMode, at: { x: number; y: number }): void
 }): JSX.Element {
-  const active = run && (run.status === 'running' || run.status === 'queued')
+  const active = run && isActiveRun(run.status)
+  const waiting = run?.status === 'waiting'
   const step = run && run.currentStep >= 0 ? run.steps[run.currentStep] : undefined
   const stop = (fn: () => void) => (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -82,7 +84,7 @@ function Card({
 
   return (
     <article
-      className={`card${selected ? ' selected' : ''}`}
+      className={`card${selected ? ' selected' : ''}${waiting ? ' needs-you' : ''}`}
       tabIndex={0}
       aria-label={`${issue.identifier} ${issue.title}`}
       draggable
@@ -179,7 +181,7 @@ function Card({
       </div>
 
       {run && (
-        <div className="agent">
+        <div className={`agent${waiting ? ' waiting' : ''}`}>
           <span className="line">
             <span className="dot" style={{ background: runColor[run.status] }} />
             {runLabel[run.status]} · {run.stepsName} · Local
@@ -190,31 +192,31 @@ function Card({
               Step {run.currentStep + 1} of {run.steps.length} · {step.name}
             </span>
           )}
+          {waiting && run.waiting && <span className="needs-reason">{run.waiting.reason}</span>}
         </div>
       )}
 
       <div className="card-foot">
         <span className="created">{createdLabel(issue.createdAt)}</span>
-        {canRun && !active && (
-          <button className="btn small card-run" type="button" onClick={stop(onStart)}>
-            {run ? 'Run again' : 'Run steps'}
-          </button>
+        {!active && sets.length > 0 && (
+          <span className="card-runs">
+            {sets.map((s) => (
+              <button key={s.name} className="btn small card-run" type="button" title={`Run "${s.name}" for ${issue.identifier}`} onClick={stop(() => onStart(s.name))}>
+                {s.label}
+              </button>
+            ))}
+          </span>
         )}
       </div>
     </article>
   )
 }
 
-export default function Board({ board, latestRun, selectedIssue, onSelect, onStart, onUpdate }: Props): JSX.Element {
-  const [stepStates, setStepStates] = useState<Set<string>>(new Set())
+export default function Board({ board, latestRun, selectedIssue, onSelect, onStart, onUpdate, setsFor }: Props): JSX.Element {
   const [menu, setMenu] = useState<{ issueId: string; mode: MenuMode; at: { x: number; y: number } } | null>(null)
   const [dropState, setDropState] = useState<string | null>(null)
   const menuIssue = menu ? board.issues.find((i) => i.id === menu.issueId) : undefined
   const progress = useStartedProgress(board.states)
-
-  useEffect(() => {
-    void window.nightShift.getSteps().then((f) => setStepStates(new Set(f.sets.flatMap((s) => s.states.map((st) => st.toLowerCase())))))
-  }, [board.fetchedAt])
 
   const byState = useMemo(() => {
     const map = new Map<string, LinearIssue[]>()
@@ -239,7 +241,7 @@ export default function Board({ board, latestRun, selectedIssue, onSelect, onSta
         {board.states.map((state) => {
           const issues = byState.get(state.id) ?? []
           const points = issues.reduce((sum, i) => sum + (i.estimate ?? 0), 0)
-          const hasSteps = stepStates.has(state.name.toLowerCase())
+          const sets = setsFor(state.name)
           return (
             <section
               key={state.id}
@@ -272,7 +274,11 @@ export default function Board({ board, latestRun, selectedIssue, onSelect, onSta
                     {points}
                   </span>
                 )}
-                {hasSteps && <span className="steps-tag" title="Night Shift has steps for this state">Steps</span>}
+                {sets.length > 0 && (
+                  <span className="steps-tag" title={`Steps: ${sets.map((s) => s.label).join(', ')}`}>
+                    {sets.length === 1 ? 'Steps' : `${sets.length} steps`}
+                  </span>
+                )}
               </div>
               <div className="col-cards">
                 {issues.slice(0, PER_COLUMN).map((issue) => (
@@ -283,10 +289,10 @@ export default function Board({ board, latestRun, selectedIssue, onSelect, onSta
                     progress={progress.get(state.id) ?? 0.5}
                     run={latestRun.get(issue.id)}
                     selected={selectedIssue === issue.id}
-                    canRun={hasSteps}
+                    sets={sets}
                     canEstimate={Boolean(board.team?.estimates.length)}
                     onSelect={() => onSelect(issue.id)}
-                    onStart={() => onStart(issue.id)}
+                    onStart={(setName) => onStart(issue.id, setName)}
                     onMenu={(mode, at) => setMenu({ issueId: issue.id, mode, at })}
                   />
                 ))}

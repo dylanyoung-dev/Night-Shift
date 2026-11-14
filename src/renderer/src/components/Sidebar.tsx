@@ -1,11 +1,12 @@
 import type { LinearProject, NightShiftProject } from '../../../shared/types'
 
-export type View = 'board' | 'agents' | 'steps' | 'runs' | 'settings'
+export type View = 'board' | 'agents' | 'automations' | 'steps' | 'runs' | 'settings' | 'projects'
 
 interface Props {
   view: View
   onView(v: View): void
   running: number
+  needsYou: number
   teamKey?: string
   projects: NightShiftProject[]
   linearProjects: LinearProject[] // for each project's color
@@ -17,6 +18,7 @@ interface Props {
 const items: { id: View; label: string }[] = [
   { id: 'board', label: 'Board' },
   { id: 'agents', label: 'Running agents' },
+  { id: 'automations', label: 'Automations' },
   { id: 'steps', label: 'Steps per state' },
   { id: 'runs', label: 'Run history' },
   { id: 'settings', label: 'Settings' }
@@ -35,6 +37,7 @@ export default function Sidebar({
   view,
   onView,
   running,
+  needsYou,
   teamKey,
   projects,
   linearProjects,
@@ -54,7 +57,12 @@ export default function Sidebar({
           onClick={() => onView(it.id)}
         >
           {it.label}
-          {it.id === 'agents' && running > 0 && <span className="count">{running}</span>}
+          {it.id === 'agents' && needsYou > 0 && (
+            <span className="count attention" title={`${needsYou} need you`}>
+              {needsYou} need you
+            </span>
+          )}
+          {it.id === 'agents' && running > 0 && needsYou === 0 && <span className="count">{running}</span>}
         </button>
       ))}
       {teamKey && (
@@ -83,7 +91,7 @@ export default function Sidebar({
               {!p.linearProjectIds.length && <span className="count">unlinked</span>}
             </button>
           ))}
-          <button type="button" className="nav subtle" onClick={onManageProjects}>
+          <button type="button" className={`nav subtle${view === 'projects' ? ' active' : ''}`} onClick={onManageProjects}>
             {projects.length ? 'Manage projects' : '+ Add a project'}
           </button>
         </>

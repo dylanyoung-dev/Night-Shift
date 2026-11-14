@@ -30,6 +30,7 @@ export default function RunsView({
           <span style={{ fontSize: 13 }}>
             {r.title}
             <span className="mono"> · {r.stepsName}</span>
+            {r.startedBy && <span className="mono"> · by {r.startedBy}</span>}
           </span>
           <span className="mono">
             {runLabel[r.status]} · {duration(r.startedAt, r.endedAt)}

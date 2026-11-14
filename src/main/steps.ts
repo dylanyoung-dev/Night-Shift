@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import YAML from 'yaml'
-import { DEFAULT_CLAUDE_COMMAND, type StepDef, type StepSet, type StepsFile, type WorktreeConfig } from '../shared/types'
+import { DEFAULT_CLAUDE_COMMAND, setLabel, type StepDef, type StepSet, type StepsFile, type WorktreeConfig } from '../shared/types'
 
 // Steps live in the repo the agents work in, so cloud runs and changes via PR use the same file.
 export const STEPS_RELATIVE_PATH = join('.nightshift', 'steps.yml')
@@ -10,7 +10,6 @@ export const DEFAULT_SETS: StepSet[] = [
   {
     name: 'Build steps',
     states: ['Ready to Build'],
-    trigger: 'manual',
     steps: [
       { name: 'Create worktree', type: 'script', cwd: 'repo', run: 'git fetch origin $BASE && git worktree add $WORKTREE -b $BRANCH origin/$BASE', onFail: 'stop' },
       { name: 'Install packages', type: 'script', run: 'npm ci', onFail: 'stop', only: 'nightshift' },
@@ -46,10 +45,11 @@ function normalizeWorktree(raw: unknown): WorktreeConfig | undefined {
 }
 
 function normalizeSet(raw: Raw, fallbackName: string, states: string[]): StepSet {
+  const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : undefined
   return {
     name: String(raw.name ?? fallbackName).trim() || fallbackName,
+    ...(label ? { label } : {}),
     states,
-    trigger: raw.trigger === 'auto' ? 'auto' : 'manual',
     worktree: normalizeWorktree(raw.worktree),
     steps: (Array.isArray(raw.steps) ? (raw.steps as Raw[]) : []).map(normalizeStep)
   }
@@ -80,10 +80,12 @@ export function checkSets(sets: StepSet[]): string[] {
     if (!set.name.trim()) problems.push('Every set of steps needs a name.')
     else if (names.has(set.name.trim().toLowerCase())) problems.push(`Two sets are named "${set.name}".`)
     names.add(set.name.trim().toLowerCase())
+    // A state can have several sets, but their buttons must read differently.
     for (const state of set.states) {
-      const other = owner.get(state.toLowerCase())
-      if (other) problems.push(`"${state}" is in both "${other}" and "${set.name}". A state can only have one set of steps.`)
-      else owner.set(state.toLowerCase(), set.name)
+      const key = `${state.toLowerCase()}|${setLabel(set).toLowerCase()}`
+      const other = owner.get(key)
+      if (other) problems.push(`"${other}" and "${set.name}" both show a "${setLabel(set)}" button on ${state}. Give one a different button label.`)
+      else owner.set(key, set.name)
     }
     set.steps.forEach((st, i) => {
       const where = `"${set.name}" step ${i + 1}`
@@ -100,19 +102,30 @@ export function loadSteps(repoPath: string): StepsFile {
   const path = join(repoPath, STEPS_RELATIVE_PATH)
   if (!existsSync(path)) return { path: null, sets: DEFAULT_SETS }
   try {
-    const sets = parseSteps(readFileSync(path, 'utf8'))
+    const text = readFileSync(path, 'utf8')
+    const sets = parseSteps(text)
     const problems = checkSets(sets)
+    // Older files could start runs on their own; that moved to Automations and is ignored now.
+    if (/^\s*trigger:\s*auto\b/m.test(text)) {
+      problems.push('A set is marked "trigger: auto". Sets no longer start runs on their own; set that up on the Automations page. Saving here removes it.')
+    }
     return { path, sets, ...(problems.length ? { problems } : {}) }
   } catch (err) {
     return { path, sets: DEFAULT_SETS, error: `Could not read ${path}: ${(err as Error).message}` }
   }
 }
 
-// The set that runs for a ticket in this state. If a hand-edited file lists a state twice,
-// the first set wins (and the Steps page shows the problem).
-export function setForState(file: StepsFile, stateName: string): StepSet | undefined {
+// Every set of steps for a ticket in this state, in file order (one button each).
+export function setsForState(file: StepsFile, stateName: string): StepSet[] {
   const s = stateName.toLowerCase()
-  return file.sets.find((set) => set.states.some((st) => st.toLowerCase() === s))
+  return file.sets.filter((set) => set.states.some((st) => st.toLowerCase() === s))
+}
+
+// One set for a state: the named one if given (and it covers the state), else the first.
+export function setForState(file: StepsFile, stateName: string, setName?: string | null): StepSet | undefined {
+  const sets = setsForState(file, stateName)
+  if (setName) return sets.find((x) => x.name.toLowerCase() === setName.toLowerCase())
+  return sets[0]
 }
 
 function stepToYaml(st: StepDef): Raw {
@@ -126,11 +139,12 @@ function stepToYaml(st: StepDef): Raw {
 }
 
 const HEADER = `# Night Shift steps. Edited from the Steps page or by hand; either way it changes through PRs.
-# Each set runs for tickets in any of its states. A state can be in only one set.
+# Each set runs for tickets in any of its states and shows as a button (label) on their cards.
+# A state can have several sets, each with its own button label.
 #
 # Variables: $TICKET (IGN-644) $ID (ign-644) $BRANCH $BASE $WORKTREE $REPO $WORKTREE_MODE
 #   (also set as environment variables NS_TICKET, NS_ID, ...)
-# trigger: manual (Run steps button) | auto (starts when a ticket is in one of the states)
+# Sets of steps only say what runs. To start runs on their own, use the Automations page.
 # worktree (optional): mode: nightshift | agent, path: "D:/worktrees/$ID"  (overrides Settings)
 # step type: script | claude | linear     onFail: stop | continue
 # cwd: repo | worktree     only: nightshift | agent  (run the step only in that worktree mode)
@@ -140,7 +154,9 @@ const HEADER = `# Night Shift steps. Edited from the Steps page or by hand; eith
 export function stringifySteps(sets: StepSet[]): string {
   const doc = {
     sets: sets.map((set) => {
-      const out: Raw = { name: set.name.trim(), states: set.states, trigger: set.trigger }
+      const out: Raw = { name: set.name.trim() }
+      if (set.label?.trim() && set.label.trim() !== set.name.trim()) out.label = set.label.trim()
+      out.states = set.states
       if (set.worktree?.mode || set.worktree?.path) {
         const wt: Raw = {}
         if (set.worktree.mode) wt.mode = set.worktree.mode

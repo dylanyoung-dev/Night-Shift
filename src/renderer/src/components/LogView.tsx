@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { LinearIssue, Run } from '../../../shared/types'
+import { isActiveRun, type LinearIssue, type Run } from '../../../shared/types'
+import Composer from './Composer'
 import { duration, runColor, runLabel, stepColor, stripAnsi } from '../util'
 
 interface Props {
@@ -62,7 +63,7 @@ export default function LogView({ run, issue, onClose, onStop, onOpenLinear }: P
     if (atBottom !== follow) setFollow(atBottom)
   }
 
-  const active = run.status === 'running' || run.status === 'queued'
+  const active = isActiveRun(run.status)
   const step = run.currentStep >= 0 ? run.steps[run.currentStep] : undefined
 
   return (
@@ -107,6 +108,9 @@ export default function LogView({ run, issue, onClose, onStop, onOpenLinear }: P
         <pre ref={logRef} className={`logview-log${wrap ? ' wrap' : ''}`} onScroll={onScroll} tabIndex={0} aria-live="off">
           {text === null ? 'Loading log…' : text || 'No output yet.'}
         </pre>
+        <div className="logview-composer">
+          <Composer run={run} />
+        </div>
         <div className="logview-tools">
           <span className="mono">
             {run.branch} · {run.worktreeMode === 'agent' ? 'worktree set up by the agent' : run.worktree}

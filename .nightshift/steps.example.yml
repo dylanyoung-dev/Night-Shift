@@ -12,7 +12,7 @@
 #   $REPO     repo path from Settings $WORKTREE_MODE  nightshift | agent
 # They are also set as environment variables: NS_TICKET, NS_ID, NS_BRANCH ...
 #
-# trigger: manual (Run steps button on the card) | auto (starts when a ticket is in one of the states)
+# Runs start from the Run steps button on a card, or from an automation (Automations page).
 # worktree (optional, overrides Settings):
 #   mode: nightshift   Night Shift creates it at `path` before the steps run
 #   mode: agent        Night Shift creates nothing; the agent sets up its own worktree
@@ -35,7 +35,6 @@
 sets:
   - name: Build steps
     states: [Ready to Build]
-    trigger: manual
     # worktree:
     #   path: D:/worktrees/$ID
     steps:
@@ -53,7 +52,7 @@ sets:
         onFail: continue
       - name: Build
         type: claude
-        run: claude -p "/build $TICKET" --permission-mode auto --allowedTools mcp__claude_ai_Linear
+        run: claude -p "/build $TICKET" --permission-mode auto --allowedTools mcp__claude_ai_Linear --output-format stream-json --verbose
       - name: Push branch
         type: script
         run: git push -u origin $BRANCH
@@ -68,10 +67,9 @@ sets:
   # One set covering two states: review fixes run the same way for both.
   - name: Review fixes
     states: [In Review, Spec Review]
-    trigger: manual
     worktree:
       mode: agent
     steps:
       - name: Fix review comments
         type: claude
-        run: claude -p "/review-fix $TICKET" --permission-mode auto --allowedTools mcp__claude_ai_Linear
+        run: claude -p "/review-fix $TICKET" --permission-mode auto --allowedTools mcp__claude_ai_Linear --output-format stream-json --verbose

@@ -8,7 +8,8 @@ export const DEFAULT_WORKTREE_PATH = '$REPO/.claude/worktrees/$ID'
 
 // Headless `claude -p` can't show permission prompts, so anything not pre-allowed is refused.
 // Auto mode approves safe actions without asking; the Linear connector is allowed outright.
-export const CLAUDE_RUN_FLAGS = '--permission-mode auto --allowedTools mcp__claude_ai_Linear'
+// stream-json + verbose make Claude report each step as it happens, so the live log shows its work.
+export const CLAUDE_RUN_FLAGS = '--permission-mode auto --allowedTools mcp__claude_ai_Linear --output-format stream-json --verbose'
 export const DEFAULT_CLAUDE_COMMAND = `claude -p "/build $TICKET" ${CLAUDE_RUN_FLAGS}`
 
 export interface WorktreeConfig {
@@ -23,6 +24,44 @@ export interface NightShiftProject {
   linearProjectIds: string[] // tickets in any of these Linear projects are shown
 }
 
+// An automation starts runs for tickets in its states, using each state's set of steps.
+//   schedule: fires every N minutes (optionally on set days / hours), up to N tickets each time,
+//             optionally stopping after a set number of runs.
+//   watch:    checks on every Linear sync and picks tickets up as they arrive, at any time or
+//             within set hours; once per arrival, or any number of times with a cooldown.
+export type AutomationMode = 'schedule' | 'watch'
+
+export interface Automation {
+  id: string
+  name: string
+  enabled: boolean
+  mode: AutomationMode
+  projectId: string | null // Night Shift project to take tickets from; null = all of the team
+  states: string[] // Linear state names
+  stepSet: string | null // which set to run when a state has several; null = the state's first set
+  runner: 'local' // 'cloud' later
+  days: number[] // 0 = Sunday ... 6 = Saturday; empty = every day
+  window: { start: string; end: string } | null // 'HH:MM' local time; start > end crosses midnight
+  // schedule
+  everyMinutes: number
+  ticketsPerRun: number
+  onlyIfTickets: boolean // an empty state doesn't use up the schedule; check again soon instead
+  maxRuns: number | null // stop (switch off) after this many runs; null = no limit
+  // watch
+  perTicket: 'perArrival' | 'repeat' // once each time a ticket arrives, or any number of times
+  cooldownHours: number // repeat: wait this long after a ticket's last run
+  maxActive: number // watch: at most this many of its runs going at once
+}
+
+export interface AutomationStatus {
+  lastRunAt?: number // schedule: last time it fired; watch: last time it picked a ticket up
+  lastCheckedAt?: number
+  nextRunAt?: number | null // schedule: null = as soon as it's allowed
+  lastResult?: string
+  runsDone?: number // schedule: times it has fired, for maxRuns
+  seen?: Record<string, string> // watch: issue id -> state it was picked up in (cleared when it leaves)
+}
+
 export interface Settings {
   linearTeamKey: string // e.g. "IGN"
   repoPath: string // local checkout of the repo agents work in
@@ -34,6 +73,7 @@ export interface Settings {
   hiddenStateTypes: string[] // Linear state types left off the board
   projects: NightShiftProject[]
   activeProjectId: string | null // null = every ticket in the team
+  automations: Automation[]
   hasLinearKey: boolean // the key itself never leaves the main process
 }
 
@@ -127,12 +167,12 @@ export interface StepDef {
   only?: WorktreeMode // run this step only in that worktree mode
 }
 
-// One set of steps, used by every Linear state listed in `states`.
-// A state belongs to at most one set.
+// One set of steps, used by every Linear state listed in `states`. A state can have several
+// sets; each shows as its own button (label) on the ticket's card.
 export interface StepSet {
   name: string
+  label?: string // button text; defaults to the name
   states: string[] // Linear state names
-  trigger: 'manual' | 'auto'
   worktree?: WorktreeConfig // overrides the Settings for runs of this set
   steps: StepDef[]
 }
@@ -144,8 +184,25 @@ export interface StepsFile {
   problems?: string[] // the file loaded but has mistakes, e.g. a state in two sets
 }
 
-export type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped'
-export type RunStatus = 'queued' | 'running' | 'done' | 'failed' | 'stopped'
+export type StepStatus = 'pending' | 'running' | 'waiting' | 'done' | 'failed' | 'skipped'
+// waiting: a Claude step ended its turn needing you (a question, approval or a denied tool).
+export type RunStatus = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'stopped'
+
+// Still going: counts toward run limits and blocks another run of the same ticket.
+// A set of steps as a button: its name (to start it) and the text shown.
+export interface StepChoice {
+  name: string
+  label: string
+}
+
+// The text on a set's button.
+export function setLabel(set: { name: string; label?: string }): string {
+  return set.label?.trim() || set.name
+}
+
+export function isActiveRun(status: RunStatus): boolean {
+  return status === 'queued' || status === 'running' || status === 'waiting'
+}
 
 export interface RunStep {
   name: string
@@ -162,6 +219,8 @@ export interface Run {
   identifier: string
   title: string
   stepsName: string
+  startedBy?: string // automation name, when one started it
+  automationId?: string
   runner: 'local'
   status: RunStatus
   branch: string
@@ -173,7 +232,9 @@ export interface Run {
   startedAt?: number
   endedAt?: number
   logFile: string
-  logTail: string // last part of the output, for the UI
+  logTail: string
+  interactive?: boolean // the current Claude step accepts messages
+  waiting?: { reason: string; since: number } | null // last part of the output, for the UI
 }
 
 export interface RepoBranches {
@@ -194,22 +255,39 @@ export interface BoardData {
   error?: string
 }
 
+export type ImportGroupKey = 'linear' | 'repo' | 'worktrees' | 'runs' | 'projects' | 'automations'
+
+export interface ImportPreview {
+  fileName: string
+  // empty: the file's list is empty, so importing it would clear this machine's list
+  groups: { key: ImportGroupKey; label: string; summary: string; notes: string[]; empty: boolean }[]
+}
+
 export interface NightShiftApi {
   getSettings(): Promise<Settings>
   saveSettings(update: SettingsUpdate): Promise<Settings>
   exportSettings(): Promise<{ path: string } | { error: string } | null> // null = cancelled
-  importSettings(): Promise<{ settings: Settings; notes: string[] } | { error: string } | null>
+  // Import in two steps: pick a file and see its parts, then apply the parts you keep.
+  previewImport(): Promise<ImportPreview | { error: string } | null> // null = cancelled
+  applyImport(keys: ImportGroupKey[]): Promise<{ settings: Settings; notes: string[] } | { error: string }>
   getBoard(): Promise<BoardData>
   refreshBoard(): Promise<BoardData>
   getSteps(): Promise<StepsFile>
   saveSteps(sets: StepSet[]): Promise<StepsFile | { error: string }>
   openStepsFile(): Promise<void>
   getRuns(): Promise<Run[]>
-  startRun(issueId: string): Promise<Run | { error: string }>
+  startRun(issueId: string, setName?: string): Promise<Run | { error: string }> // setName picks one of the state's sets
   stopRun(runId: string): Promise<void>
   openLog(runId: string): Promise<void>
   updateIssue(issueId: string, update: IssueUpdate): Promise<{ ok: true } | { error: string }>
-  readLog(runId: string): Promise<string> // whole log file (last 4 MB if bigger)
+  readLog(runId: string): Promise<string>
+  replyToRun(runId: string, text: string): Promise<{ ok: true } | { error: string }>
+  finishRunStep(runId: string): Promise<{ ok: true } | { error: string }> // end the Claude session, carry on
+  onOpenRun(cb: (runId: string) => void): () => void // a notification was clicked
+  getAutomationStatus(): Promise<Record<string, AutomationStatus>>
+  runAutomationNow(id: string): Promise<{ ok: true; message: string } | { error: string }>
+  onAutomationStatus(cb: (status: Record<string, AutomationStatus>) => void): () => void
+  onSettings(cb: (settings: Settings) => void): () => void // whole log file (last 4 MB if bigger)
   openInBrowser(url: string): Promise<void>
   pickFolder(startAt?: string): Promise<string | null>
   listBranches(repoPath: string, fetch?: boolean): Promise<RepoBranches>

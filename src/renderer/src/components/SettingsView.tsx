@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_WORKTREE_PATH, type LinearProject, type NightShiftProject, type RepoBranches, type Settings } from '../../../shared/types'
+import { DEFAULT_WORKTREE_PATH, type ImportGroupKey, type ImportPreview, type RepoBranches, type Settings } from '../../../shared/types'
 
 // Mirrors resolveWorktreePath in the main process, for the example under the field.
 function previewPath(template: string, repo: string): string {
@@ -13,8 +13,6 @@ function previewPath(template: string, repo: string): string {
 
 interface Props {
   settings: Settings
-  linearProjects: LinearProject[] // the team's Linear projects to link to
-  focusProjects?: boolean // scroll to the Projects section on open
   onSaved(s: Settings): void
 }
 
@@ -22,19 +20,18 @@ const STATE_TYPES = ['triage', 'backlog', 'unstarted', 'started', 'completed', '
 
 const SECTIONS = [
   { id: 'linear', label: 'Linear' },
-  { id: 'projects', label: 'Projects' },
   { id: 'repo', label: 'Repository' },
   { id: 'worktrees', label: 'Worktrees' },
   { id: 'runs', label: 'Runs' },
   { id: 'sharing', label: 'Share settings' }
 ]
 
-export default function SettingsView({ settings, linearProjects, focusProjects, onSaved }: Props): JSX.Element {
+export default function SettingsView({ settings, onSaved }: Props): JSX.Element {
   const [form, setForm] = useState({ ...settings })
   const [apiKey, setApiKey] = useState('')
   const [saved, setSaved] = useState(false)
   const [dirty, setDirty] = useState(false)
-  const [active, setActive] = useState(focusProjects ? 'projects' : 'linear')
+  const [active, setActive] = useState('linear')
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Highlight the section nearest the top of the scroll area.
@@ -42,14 +39,12 @@ export default function SettingsView({ settings, linearProjects, focusProjects, 
     const root = scrollRef.current
     if (!root) return
     const onScroll = (): void => {
-      const top = root.getBoundingClientRect().top + 90
+      const top = root.getBoundingClientRect().top + 140 // just under the pinned header
       let current = SECTIONS[0].id
       for (const s of SECTIONS) {
         const el = document.getElementById(s.id)
         if (el && el.getBoundingClientRect().top <= top) current = s.id
       }
-      // At the very bottom, the last section wins even if it's short.
-      if (root.scrollTop + root.clientHeight >= root.scrollHeight - 4) current = SECTIONS[SECTIONS.length - 1].id
       setActive(current)
     }
     root.addEventListener('scroll', onScroll, { passive: true })
@@ -87,33 +82,6 @@ export default function SettingsView({ settings, linearProjects, focusProjects, 
     }
   }
 
-  // Projects are saved with the rest of the settings.
-  function setProject(i: number, patch: Partial<NightShiftProject>): void {
-    set(
-      'projects',
-      form.projects.map((p, j) => (j === i ? { ...p, ...patch } : p))
-    )
-  }
-  function addProject(): void {
-    let name = 'New project'
-    for (let n = 2; form.projects.some((p) => p.name === name); n++) name = `New project ${n}`
-    set('projects', [...form.projects, { id: crypto.randomUUID(), name, linearProjectIds: [] }])
-  }
-  function removeProject(i: number): void {
-    const gone = form.projects[i]
-    setForm((f) => ({
-      ...f,
-      projects: f.projects.filter((_, j) => j !== i),
-      activeProjectId: f.activeProjectId === gone.id ? null : f.activeProjectId
-    }))
-    setSaved(false)
-    setDirty(true)
-  }
-
-  useEffect(() => {
-    if (focusProjects) document.getElementById('projects')?.scrollIntoView({ block: 'start' })
-  }, [focusProjects])
-
   const branchNames = repo?.branches.map((b) => b.name) ?? []
   const baseKnown = branchNames.includes(form.baseBranch)
   const baseOnOrigin = repo?.branches.some((b) => b.name === form.baseBranch && b.remote) ?? false
@@ -143,19 +111,40 @@ export default function SettingsView({ settings, linearProjects, focusProjects, 
     setFileMsg('error' in res ? { text: res.error, warn: true } : { text: `Exported to ${res.path}. It doesn't include your Linear API key.` })
   }
 
-  // Import replaces the form with what was saved; unsaved edits here are dropped.
-  async function importFile(): Promise<void> {
-    const res = await window.nightShift.importSettings()
+  // Import is two steps: pick a file and see what's in it, then apply the parts that are ticked.
+  const [preview, setPreview] = useState<ImportPreview | null>(null)
+  const [keep, setKeep] = useState<Set<ImportGroupKey>>(new Set())
+
+  const hasLocal = (key: ImportGroupKey): boolean =>
+    key === 'projects' ? settings.projects.length > 0 : key === 'automations' ? settings.automations.length > 0 : false
+
+  async function chooseImportFile(): Promise<void> {
+    const res = await window.nightShift.previewImport()
     if (!res) return
     if ('error' in res) {
       setFileMsg({ text: res.error, warn: true })
       return
     }
+    setFileMsg(null)
+    setPreview(res)
+    // Leave out parts that would only clear what's here (an empty list in the file).
+    setKeep(new Set(res.groups.filter((g) => !g.empty || !hasLocal(g.key)).map((g) => g.key)))
+  }
+
+  // Applying replaces the form with what was saved; unsaved edits here are dropped.
+  async function applyImport(): Promise<void> {
+    const res = await window.nightShift.applyImport([...keep])
+    if ('error' in res) {
+      setFileMsg({ text: res.error, warn: true })
+      return
+    }
+    setPreview(null)
+    setApiKey('')
     setForm({ ...res.settings })
     onSaved(res.settings)
     setSaved(false)
     setDirty(false) // import saves straight away
-    setFileMsg({ text: ['Settings imported.', ...res.notes].join(' '), warn: res.notes.some((n) => n.includes("doesn't exist")) })
+    setFileMsg({ text: ['Imported.', ...res.notes].join(' '), warn: res.notes.some((n) => n.includes("doesn't exist")) })
   }
 
   return (
@@ -173,8 +162,10 @@ export default function SettingsView({ settings, linearProjects, focusProjects, 
       <div className="settings-layout">
         <div className="settings-main">
         <section id="linear" className="settings-section" aria-labelledby="linear-title">
-          <h2 id="linear-title">Linear</h2>
-          <p className="section-intro">Where tickets come from and how often Night Shift checks for changes.</p>
+          <div className="section-side">
+            <h2 id="linear-title">Linear</h2>
+            <p className="section-intro">Where tickets come from and how often Night Shift checks for changes.</p>
+          </div>
           <div className="form">
             <label className="field">
               Linear API key {settings.hasLinearKey ? '(saved, leave blank to keep it)' : ''}
@@ -226,63 +217,11 @@ export default function SettingsView({ settings, linearProjects, focusProjects, 
             </div>
           </div>
         </section>
-        <section id="projects" className="settings-section" aria-labelledby="projects-title">
-          <h2 id="projects-title">Projects</h2>
-          <p className="section-intro">Each project shows only the tickets in the Linear projects you link. They appear under Linear in the left nav.</p>
-          <div className="form">
-            <div className="field wide projects-section">
-              {form.projects.map((p, i) => (
-                <div key={p.id} className="project-edit">
-                  <div className="inputrow">
-                    <input
-                      className="input"
-                      aria-label="Project name"
-                      value={p.name}
-                      onChange={(e) => setProject(i, { name: e.target.value })}
-                    />
-                    <button className="btn danger" type="button" onClick={() => removeProject(i)}>
-                      Remove
-                    </button>
-                  </div>
-                  <div className="state-picks" role="group" aria-label={`Linear projects for ${p.name}`}>
-                    {linearProjects.map((lp) => {
-                      const on = p.linearProjectIds.includes(lp.id)
-                      return (
-                        <button
-                          key={lp.id}
-                          type="button"
-                          className={`state-pick${on ? ' on' : ''}`}
-                          aria-pressed={on}
-                          onClick={() =>
-                            setProject(i, {
-                              linearProjectIds: on ? p.linearProjectIds.filter((x) => x !== lp.id) : [...p.linearProjectIds, lp.id],
-                              // Name an untitled project after the first Linear project picked.
-                              ...(!on && /^New project( \d+)?$/.test(p.name) && !p.linearProjectIds.length ? { name: lp.name } : {})
-                            })
-                          }
-                        >
-                          <span className="dot" style={{ background: lp.color }} aria-hidden="true" />
-                          {lp.name}
-                          {lp.state === 'completed' || lp.state === 'canceled' ? <span className="taken">{lp.state}</span> : null}
-                        </button>
-                      )
-                    })}
-                    {!linearProjects.length && <span className="note">Linear projects load once your Linear key and team are set.</span>}
-                  </div>
-                  {!p.linearProjectIds.length && <span className="note warn">Pick at least one Linear project, or this project shows no tickets.</span>}
-                </div>
-              ))}
-              <div>
-                <button className="btn" type="button" onClick={addProject}>
-                  Add project
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
         <section id="repo" className="settings-section" aria-labelledby="repo-title">
-          <h2 id="repo-title">Repository</h2>
-          <p className="section-intro">The checkout agents work in, and the branch new ticket branches start from.</p>
+          <div className="section-side">
+            <h2 id="repo-title">Repository</h2>
+            <p className="section-intro">The checkout agents work in, and the branch new ticket branches start from.</p>
+          </div>
           <div className="form">
             <div className="field wide">
               <label htmlFor="repoPath">Repo path (the checkout agents work in)</label>
@@ -367,8 +306,10 @@ export default function SettingsView({ settings, linearProjects, focusProjects, 
           </div>
         </section>
         <section id="worktrees" className="settings-section" aria-labelledby="worktrees-title">
-          <h2 id="worktrees-title">Worktrees</h2>
-          <p className="section-intro">Where each run works. A set of steps can override this on the Steps page.</p>
+          <div className="section-side">
+            <h2 id="worktrees-title">Worktrees</h2>
+            <p className="section-intro">Where each run works. A set of steps can override this on the Steps page.</p>
+          </div>
           <div className="form">
             <div className="field wide">
               New worktrees
@@ -416,8 +357,10 @@ export default function SettingsView({ settings, linearProjects, focusProjects, 
           </div>
         </section>
         <section id="runs" className="settings-section" aria-labelledby="runs-title">
-          <h2 id="runs-title">Runs</h2>
-          <p className="section-intro">How many local runs can go at once, across all sets of steps.</p>
+          <div className="section-side">
+            <h2 id="runs-title">Runs</h2>
+            <p className="section-intro">How many local runs can go at once, across all sets of steps.</p>
+          </div>
           <div className="form">
             <label className="field">
               Max local runs at once
@@ -433,18 +376,62 @@ export default function SettingsView({ settings, linearProjects, focusProjects, 
           </div>
         </section>
         <section id="sharing" className="settings-section" aria-labelledby="sharing-title">
-          <h2 id="sharing-title">Share settings</h2>
+          <div className="section-side">
+            <h2 id="sharing-title">Share settings</h2>
+            <p className="section-intro">Move your projects, automations and general settings to another machine.</p>
+          </div>
           <div className="form">
             <div className="field wide">
-              <span>Export your projects and general settings to a file, then import it on another machine. The Linear API key is never included.</span>
+              <span>Export to a file here, then import it on the other machine. Projects and automations come along too; automations arrive switched off. The Linear API key is never included; add it on each machine.</span>
               <div className="inputrow share-row">
                 <button className="btn" type="button" onClick={() => void exportFile()}>
                   Export settings
                 </button>
-                <button className="btn" type="button" onClick={() => void importFile()}>
-                  Import settings
+                <button className="btn" type="button" onClick={() => void chooseImportFile()}>
+                  Import settings…
                 </button>
               </div>
+              {preview && (
+                <fieldset className="import-preview">
+                  <legend>
+                    Import from <span className="mono">{preview.fileName}</span>: choose what to bring in
+                  </legend>
+                  {preview.groups.map((g) => (
+                    <label key={g.key} className="check-row">
+                      <input
+                        type="checkbox"
+                        checked={keep.has(g.key)}
+                        onChange={(e) =>
+                          setKeep((k) => {
+                            const next = new Set(k)
+                            if (e.target.checked) next.add(g.key)
+                            else next.delete(g.key)
+                            return next
+                          })
+                        }
+                      />
+                      <span>
+                        <strong>{g.label}</strong>
+                        <span className="sub">{g.summary}</span>
+                        {g.notes.map((n) => (
+                          <span key={n} className="sub warn-text">
+                            {n}
+                          </span>
+                        ))}
+                      </span>
+                    </label>
+                  ))}
+                  {dirty && <span className="note warn">Your unsaved changes on this page will be replaced.</span>}
+                  <div className="inputrow share-row">
+                    <button className="btn primary" type="button" disabled={!keep.size} onClick={() => void applyImport()}>
+                      Import selected ({keep.size})
+                    </button>
+                    <button className="btn" type="button" onClick={() => setPreview(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                </fieldset>
+              )}
               {fileMsg && <span className={`note${fileMsg.warn ? ' warn' : ''}`}>{fileMsg.text}</span>}
             </div>
           </div>

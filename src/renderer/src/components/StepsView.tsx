@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { CLAUDE_RUN_FLAGS, DEFAULT_CLAUDE_COMMAND, type LinearState, type Settings, type StepDef, type StepSet, type StepsFile, type WorktreeMode } from '../../../shared/types'
+import { DEFAULT_CLAUDE_COMMAND, setLabel, type LinearState, type Settings, type StepDef, type StepSet, type StepsFile, type WorktreeMode } from '../../../shared/types'
 import { groupSteps } from '../util'
 import { StatusIcon } from './LinearIcons'
 
@@ -14,8 +14,23 @@ const NEW_STEP: Record<StepDef['type'], () => StepDef> = {
   linear: () => ({ name: 'Move ticket', type: 'linear', moveTo: '', onFail: 'continue' })
 }
 
-// A Claude step needs one of these to work unattended.
+// What a Claude step needs to work unattended and show its progress live.
 const HAS_PERMISSION_FLAGS = /--permission-mode|--dangerously-skip-permissions|--allowed-?tools/i
+const HAS_STREAM_FLAGS = /--output-format[ =]stream-json/i
+
+function missingFlags(run: string): { flags: string; why: string }[] {
+  const out: { flags: string; why: string }[] = []
+  if (!HAS_PERMISSION_FLAGS.test(run)) {
+    out.push({
+      flags: '--permission-mode auto --allowedTools mcp__claude_ai_Linear',
+      why: "Claude runs headless and can't ask for permission, so tools it isn't allowed (Linear, edits, commands) get refused."
+    })
+  }
+  if (!HAS_STREAM_FLAGS.test(run)) {
+    out.push({ flags: '--output-format stream-json --verbose', why: 'Without streaming output the live log stays empty until Claude finishes.' })
+  }
+  return out
+}
 
 const typeLabel: Record<StepDef['type'], string> = { script: 'Script', claude: 'Claude', linear: 'Linear' }
 
@@ -47,12 +62,25 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
 
   const current = sets[selected] as StepSet | undefined
 
-  // Which set owns each state, so a state can't be put in two sets.
-  const owner = useMemo(() => {
-    const m = new Map<string, number>()
-    sets.forEach((set, i) => set.states.forEach((st) => !m.has(st.toLowerCase()) && m.set(st.toLowerCase(), i)))
+  // The other sets on each state, shown on its chip. A state can have several sets.
+  const others = useMemo(() => {
+    const m = new Map<string, StepSet[]>()
+    sets.forEach((set, i) => {
+      if (i === selected) return
+      set.states.forEach((st) => m.set(st.toLowerCase(), [...(m.get(st.toLowerCase()) ?? []), set]))
+    })
     return m
-  }, [sets])
+  }, [sets, selected])
+
+  // Two sets on one state need different buttons.
+  const labelClash = current
+    ? sets.find(
+        (s, i) =>
+          i !== selected &&
+          setLabel(s).toLowerCase() === setLabel(current).toLowerCase() &&
+          s.states.some((st) => current.states.some((c) => c.toLowerCase() === st.toLowerCase()))
+      )
+    : undefined
 
   function change(fn: (set: StepSet) => void): void {
     setSets((prev) => {
@@ -80,7 +108,7 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
     const base = 'New steps'
     let name = base
     for (let n = 2; sets.some((s) => s.name.toLowerCase() === name.toLowerCase()); n++) name = `${base} ${n}`
-    setSets((prev) => [...copy(prev), { name, states: [], trigger: 'manual', steps: [NEW_STEP.claude()] }])
+    setSets((prev) => [...copy(prev), { name, states: [], steps: [NEW_STEP.claude()] }])
     setSelected(sets.length)
     setDirty(true)
     setSaved(false)
@@ -125,7 +153,7 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
           <button key={i} type="button" className={`state${i === selected ? ' active' : ''}`} onClick={() => setSelected(i)}>
             {s.name || 'Untitled'}
             <span className="sub">
-              {s.states.length ? s.states.join(', ') : 'No states yet'} · {s.steps.length} {s.steps.length === 1 ? 'step' : 'steps'}
+              &quot;{setLabel(s)}&quot; · {s.states.length ? s.states.join(', ') : 'No states yet'} · {s.steps.length} {s.steps.length === 1 ? 'step' : 'steps'}
             </span>
           </button>
         ))}
@@ -169,11 +197,18 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
                 <input className="input" value={current.name} onChange={(e) => change((s) => (s.name = e.target.value))} />
               </label>
               <label className="lbl">
-                Start
-                <select className="input" value={current.trigger} onChange={(e) => change((s) => (s.trigger = e.target.value as StepSet['trigger']))}>
-                  <option value="manual">From the Run steps button</option>
-                  <option value="auto">Automatically, when a ticket is in one of the states</option>
-                </select>
+                Button label (on the ticket&apos;s card)
+                <input
+                  className="input"
+                  value={current.label ?? ''}
+                  placeholder={current.name || 'Run steps'}
+                  onChange={(e) => change((s) => (s.label = e.target.value || undefined))}
+                />
+                {labelClash && (
+                  <span className="note warn">
+                    &quot;{labelClash.name}&quot; already shows a &quot;{setLabel(current)}&quot; button on the same state. Pick a different label.
+                  </span>
+                )}
               </label>
               <label className="lbl">
                 Worktree
@@ -214,16 +249,14 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
             <div className="state-picks" role="group" aria-label="Linear states for this set">
               {states.map((st) => {
                 const on = current.states.some((n) => n.toLowerCase() === st.name.toLowerCase())
-                const ownerIdx = owner.get(st.name.toLowerCase())
-                const takenBy = ownerIdx !== undefined && ownerIdx !== selected ? sets[ownerIdx] : undefined
+                const also = others.get(st.name.toLowerCase()) ?? []
                 return (
                   <button
                     key={st.id}
                     type="button"
                     className={`state-pick${on ? ' on' : ''}`}
                     aria-pressed={on}
-                    disabled={Boolean(takenBy)}
-                    title={takenBy ? `Already in "${takenBy.name}". A state can have only one set of steps.` : undefined}
+                    title={also.length ? `Also has: ${also.map((s) => `${s.name} ("${setLabel(s)}" button)`).join(', ')}` : undefined}
                     onClick={() =>
                       change((s) => {
                         s.states = on ? s.states.filter((n) => n.toLowerCase() !== st.name.toLowerCase()) : [...s.states, st.name]
@@ -232,7 +265,7 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
                   >
                     <StatusIcon state={st} />
                     {st.name}
-                    {takenBy && <span className="taken">{takenBy.name}</span>}
+                    {also.length > 0 && <span className="taken">also {also.map((s) => setLabel(s)).join(', ')}</span>}
                   </button>
                 )
               })}
@@ -318,11 +351,15 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
                       </button>
                     </span>
                   </div>
-                  {st.type === 'claude' && !HAS_PERMISSION_FLAGS.test(st.run ?? '') && (
+                  {st.type === 'claude' && missingFlags(st.run ?? '').length > 0 && (
                     <div className="step-warn">
-                      Claude runs headless here and can't ask for permission, so tools it isn't allowed (Linear, edits, commands) get refused.
-                      <button className="btn small" type="button" onClick={() => changeStep(i, { run: `${(st.run ?? '').trim()} ${CLAUDE_RUN_FLAGS}`.trim() })}>
-                        Add {CLAUDE_RUN_FLAGS}
+                      {missingFlags(st.run ?? '').map((m) => m.why).join(' ')}
+                      <button
+                        className="btn small"
+                        type="button"
+                        onClick={() => changeStep(i, { run: [(st.run ?? '').trim(), ...missingFlags(st.run ?? '').map((m) => m.flags)].join(' ').trim() })}
+                      >
+                        Add {missingFlags(st.run ?? '').map((m) => m.flags).join(' ')}
                       </button>
                     </div>
                   )}

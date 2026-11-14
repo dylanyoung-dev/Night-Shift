@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
-import type { BoardData, NightShiftApi, Run, SettingsUpdate } from '../shared/types'
+import type { AutomationStatus, BoardData, NightShiftApi, Run, Settings, SettingsUpdate } from '../shared/types'
 
 function listen<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
   const handler = (_e: IpcRendererEvent, ...args: unknown[]): void => cb(...(args as T))
@@ -11,17 +11,25 @@ const api: NightShiftApi = {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (update: SettingsUpdate) => ipcRenderer.invoke('settings:save', update),
   exportSettings: () => ipcRenderer.invoke('settings:export'),
-  importSettings: () => ipcRenderer.invoke('settings:import'),
+  previewImport: () => ipcRenderer.invoke('settings:importPreview'),
+  applyImport: (keys) => ipcRenderer.invoke('settings:importApply', keys),
   getBoard: () => ipcRenderer.invoke('board:get'),
   refreshBoard: () => ipcRenderer.invoke('board:refresh'),
   getSteps: () => ipcRenderer.invoke('steps:get'),
   saveSteps: (sets) => ipcRenderer.invoke('steps:save', sets),
   openStepsFile: () => ipcRenderer.invoke('steps:open'),
   getRuns: () => ipcRenderer.invoke('runs:get'),
-  startRun: (issueId: string) => ipcRenderer.invoke('runs:start', issueId),
+  startRun: (issueId: string, setName?: string) => ipcRenderer.invoke('runs:start', issueId, setName),
   stopRun: (runId: string) => ipcRenderer.invoke('runs:stop', runId),
   openLog: (runId: string) => ipcRenderer.invoke('runs:openLog', runId),
   readLog: (runId: string) => ipcRenderer.invoke('runs:readLog', runId),
+  replyToRun: (runId: string, text: string) => ipcRenderer.invoke('runs:reply', runId, text),
+  finishRunStep: (runId: string) => ipcRenderer.invoke('runs:finishStep', runId),
+  onOpenRun: (cb) => listen<[string]>('open-run', cb),
+  getAutomationStatus: () => ipcRenderer.invoke('automations:status'),
+  runAutomationNow: (id: string) => ipcRenderer.invoke('automations:runNow', id),
+  onAutomationStatus: (cb) => listen<[Record<string, AutomationStatus>]>('automations', cb),
+  onSettings: (cb) => listen<[Settings]>('settings', cb),
   updateIssue: (issueId, update) => ipcRenderer.invoke('issue:update', issueId, update),
   openInBrowser: (url: string) => ipcRenderer.invoke('open:url', url),
   pickFolder: (startAt?: string) => ipcRenderer.invoke('dialog:pickFolder', startAt),

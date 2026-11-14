@@ -25,7 +25,7 @@ npm run dev
    ```
 
    This makes `dist\Night Shift Setup <version>.exe`. It installs for your user only (no admin needed) and adds Start menu and desktop shortcuts. To run it without installing, use `npm run package:dir` and open `dist\win-unpacked\Night Shift.exe`, or skip packaging and use `npm run dev`.
-3. On the first computer, **Settings › Export settings** saves `night-shift-settings.yml`. Copy it over and use **Settings › Import settings**. It brings your projects and general settings (team, repo path, base branch, worktrees, run limits, hidden states), nothing else. If the repo path doesn't exist on the new machine, the local one is kept and you're told.
+3. On the first computer, **Settings › Export settings** saves `night-shift-settings.yml`. Copy it over and use **Settings › Import settings…**. It shows what's in the file (Linear, Repository, Worktrees, Runs, Projects, Automations); untick anything you don't want, then **Import selected**. Automations arrive switched off, so two machines don't run the same agents; turn on the ones this machine should run. If the repo path doesn't exist on the new machine, the local one is kept and you're told.
 4. Paste your Linear API key in Settings. It's never in the exported file; each machine stores its own, encrypted for that Windows user.
 
 The installed app and `npm run dev` share the same settings and run history.
@@ -50,9 +50,18 @@ A **project** is a named slice of the team's tickets, linked to one or more Line
 
 The filter bar above the board narrows what's shown by ID or title, assignee, label and priority. Filters only change the view; they reset when you switch project.
 
+## Automations
+
+The **Automations** page schedules agent runs. Each automation picks tickets from a project and one or more Linear states, and runs each state's set of steps (states without a set can't be picked). Two kinds:
+
+- **Watch for tickets**: checks on every Linear sync and picks tickets up as they arrive, at any time or within set days and hours. Per ticket: once each time it arrives in the state, or any number of times with a cooldown. A limit on how many of its runs go at once keeps it from queuing a whole column.
+- **On a schedule**: fires every N minutes within set days and hours, starting up to N tickets each time (highest priority first). It can stop after a set number of runs and switch itself off. With **Only run when the state has tickets**, an empty state doesn't use up a run; it checks again in a minute.
+
+New automations start switched off. **Run now** checks straight away, ignoring the schedule and hours. All runs share the max-local-runs limit in Settings, and Run history shows which automation started each run.
+
 ## Steps
 
-Steps are grouped into **sets**. A set runs for tickets in any of its Linear states, and a state can be in only one set. Create and edit sets on the **Steps per state** page; saving writes `.nightshift/steps.yml` in the repo agents work in (not this repo), so changes go through PRs. Without that file the built-in defaults are used. Older files with one block per state still load and are converted on the next save. See `.nightshift/steps.example.yml` for every option.
+Steps are grouped into **sets**. A set runs for tickets in any of its Linear states and shows as a button on their cards (its **button label**, e.g. Review and Review fix on In Review). A state can have several sets; two sets on the same state need different labels. Automations on a state with several sets pick which one to run. Create and edit sets on the **Steps per state** page; saving writes `.nightshift/steps.yml` in the repo agents work in (not this repo), so changes go through PRs. Without that file the built-in defaults are used. Older files with one block per state still load and are converted on the next save. Sets only say what runs; runs start from a card's Run steps button or from an automation. See `.nightshift/steps.example.yml` for every option.
 
 Each run:
 

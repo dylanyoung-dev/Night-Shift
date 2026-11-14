@@ -1,19 +1,21 @@
 import { useEffect, useRef } from 'react'
-import type { LinearIssue, Run } from '../../../shared/types'
+import { isActiveRun, type LinearIssue, type Run, type StepChoice } from '../../../shared/types'
+import Composer from './Composer'
 import { duration, groupSteps, runColor, runLabel, stepColor, stripAnsi } from '../util'
 
 interface Props {
   issue: LinearIssue | null
   run: Run | null
   log: string
-  onStart(issueId: string): void
+  sets: StepChoice[] // the sets of steps for the ticket's state
+  onStart(issueId: string, setName: string): void
   onStop(runId: string): void
   onOpenLog(runId: string): void
   onOpenLinear(url: string): void
   onClose(): void
 }
 
-export default function RunPanel({ issue, run, log, onStart, onStop, onOpenLog, onOpenLinear, onClose }: Props): JSX.Element {
+export default function RunPanel({ issue, run, log, sets, onStart, onStop, onOpenLog, onOpenLinear, onClose }: Props): JSX.Element {
   const logRef = useRef<HTMLPreElement>(null)
 
   useEffect(() => {
@@ -23,7 +25,7 @@ export default function RunPanel({ issue, run, log, onStart, onStop, onOpenLog, 
 
   const identifier = issue?.identifier ?? run?.identifier ?? ''
   const title = issue?.title ?? run?.title ?? ''
-  const active = run && (run.status === 'running' || run.status === 'queued')
+  const active = run && isActiveRun(run.status)
 
   return (
     <aside className="panel" aria-label="Run detail">
@@ -76,15 +78,19 @@ export default function RunPanel({ issue, run, log, onStart, onStop, onOpenLog, 
           <pre className="log" ref={logRef}>
             {stripAnsi(log) || 'No output yet.'}
           </pre>
+          <Composer run={run} compact />
         </>
       )}
 
       <div className="actions">
-        {issue && !active && (
-          <button className="btn primary" type="button" onClick={() => onStart(issue.id)}>
-            {run ? 'Run steps again' : 'Run steps'}
-          </button>
-        )}
+        {issue &&
+          !active &&
+          sets.map((s, i) => (
+            <button key={s.name} className={`btn${i === 0 ? ' primary' : ''}`} type="button" title={`Run "${s.name}"`} onClick={() => onStart(issue.id, s.name)}>
+              {s.label}
+            </button>
+          ))}
+        {issue && !active && !sets.length && <span className="note">No steps for {issue.stateName}. Add some on the Steps page.</span>}
         {run && active && (
           <button className="btn danger" type="button" onClick={() => onStop(run.id)}>
             Stop run

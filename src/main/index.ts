@@ -1,13 +1,14 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { join } from 'path'
+import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from 'electron'
+import { basename, join } from 'path'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'fs'
-import type { BoardData, IssueUpdate, LinearState, SettingsUpdate, StepSet } from '../shared/types'
+import type { BoardData, ImportGroupKey, IssueUpdate, LinearState, SettingsUpdate, StepSet } from '../shared/types'
 import { getLinearKey, getSettings, updateSettings } from './settings'
 import { fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, updateIssue } from './linear'
-import { loadSteps, saveSteps, setForState, starterSteps, STEPS_RELATIVE_PATH } from './steps'
+import { loadSteps, saveSteps, setForState, setsForState, starterSteps, STEPS_RELATIVE_PATH } from './steps'
 import { Runner } from './runner'
 import { listBranches } from './git'
-import { exportSettings, readSettingsFile } from './configFile'
+import { combineGroups, exportSettings, readImportGroups } from './configFile'
+import { AutomationScheduler } from './automations'
 
 // Pin the data folder so dev runs and an installed copy share settings and run history,
 // whatever product name the installer uses.
@@ -37,7 +38,44 @@ const runner = new Runner({
     await syncIssue(key, issueId)
   },
   onRuns: (runs) => send('runs', runs),
-  onOutput: (runId, chunk) => send('run-output', runId, chunk)
+  onOutput: (runId, chunk) => send('run-output', runId, chunk),
+  onWaiting: (run) => notifyWaiting(run.id, run.identifier, run.waiting?.reason ?? 'Claude needs you')
+})
+
+// A desktop notification and a flashing taskbar icon when a run needs the person.
+function notifyWaiting(runId: string, identifier: string, reason: string): void {
+  win?.flashFrame(true)
+  if (!Notification.isSupported()) return
+  const n = new Notification({ title: `${identifier} needs you`, body: reason, silent: false })
+  n.on('click', () => {
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    send('open-run', runId)
+  })
+  n.show()
+}
+
+const scheduler = new AutomationScheduler({
+  getSettings,
+  disable: (id) => {
+    const s = updateSettings({ automations: getSettings().automations.map((a) => (a.id === id ? { ...a, enabled: false } : a)) })
+    send('settings', s)
+  },
+  getKey: getLinearKey,
+  getAllStates: () => allStates,
+  fetchIssues: (stateIds, projectIds) => {
+    const key = getLinearKey()
+    if (!key) throw new Error('No Linear API key set')
+    return fetchIssues(key, getSettings().linearTeamKey, stateIds, projectIds)
+  },
+  loadSteps: () => loadSteps(getSettings().repoPath),
+  setForState,
+  isBusy: (id) => runner.isBusy(id),
+  runs: () => runner.list(),
+  start: (issue, set, by) => void runner.start(issue, set, by),
+  onStatus: (status) => send('automations', status)
 })
 
 async function refreshBoard(): Promise<BoardData> {
@@ -74,7 +112,7 @@ async function refreshBoard(): Promise<BoardData> {
         ? { error: `"${project.name}" isn't linked to a Linear project yet. Link one in Settings › Projects.` }
         : {})
     }
-    autoStart()
+    void scheduler.tick()
   } catch (err) {
     board = { ...board, error: `Linear: ${(err as Error).message}` }
   }
@@ -121,19 +159,6 @@ function cleanUpdate(u: IssueUpdate): IssueUpdate | string {
   return Object.keys(out).length ? out : 'Nothing to change'
 }
 
-// Starts runs for tickets whose state's set of steps triggers automatically.
-function autoStart(): void {
-  const s = getSettings()
-  if (!s.repoPath) return
-  const file = loadSteps(s.repoPath)
-  for (const issue of board.issues) {
-    const set = setForState(file, issue.stateName)
-    if (!set || set.trigger !== 'auto') continue
-    if (runner.isBusy(issue.id) || runner.ranRecently(issue.id, set.name)) continue
-    runner.start(issue, set)
-  }
-}
-
 function schedulePolling(): void {
   if (pollTimer) clearInterval(pollTimer)
   const seconds = Math.max(15, getSettings().pollSeconds)
@@ -143,11 +168,20 @@ function schedulePolling(): void {
 function registerIpc(): void {
   ipcMain.handle('settings:get', () => getSettings())
   ipcMain.handle('settings:save', (_e, update: SettingsUpdate) => {
+    const before = getSettings().automations
     const s = updateSettings(update)
+    // Switching an automation back on, or changing its run limit, starts its count over.
+    for (const a of s.automations) {
+      const old = before.find((b) => b.id === a.id)
+      if (old && ((a.enabled && !old.enabled) || a.maxRuns !== old.maxRuns)) scheduler.resetCount(a.id)
+    }
     schedulePolling()
     void refreshBoard()
+    send('automations', scheduler.view())
     return s
   })
+  ipcMain.handle('automations:status', () => scheduler.view())
+  ipcMain.handle('automations:runNow', (_e, id: string) => scheduler.runNow(id))
   ipcMain.handle('settings:export', async () => {
     const opts: Electron.SaveDialogOptions = {
       title: 'Export Night Shift settings',
@@ -163,7 +197,8 @@ function registerIpc(): void {
       return { error: `Couldn't write the file: ${(err as Error).message}` }
     }
   })
-  ipcMain.handle('settings:import', async () => {
+  let pendingImport: string | null = null
+  ipcMain.handle('settings:importPreview', async () => {
     const opts: Electron.OpenDialogOptions = {
       title: 'Import Night Shift settings',
       properties: ['openFile'],
@@ -173,10 +208,34 @@ function registerIpc(): void {
     const path = res.filePaths[0]
     if (res.canceled || !path) return null
     try {
-      const { update, notes } = readSettingsFile(path, getSettings())
+      const groups = readImportGroups(path, getSettings())
+      if (!groups.length) return { error: 'That file has nothing to import.' }
+      pendingImport = path
+      return {
+        fileName: basename(path),
+        groups: groups.map(({ key, label, summary, notes, update }) => ({
+          key,
+          label,
+          summary,
+          notes,
+          empty: update.projects?.length === 0 || update.automations?.length === 0
+        }))
+      }
+    } catch (err) {
+      return { error: (err as Error).message }
+    }
+  })
+  ipcMain.handle('settings:importApply', (_e, keys: ImportGroupKey[]) => {
+    if (!pendingImport) return { error: 'Pick the file again.' }
+    if (!Array.isArray(keys) || !keys.length) return { error: 'Nothing selected to import.' }
+    try {
+      const current = getSettings()
+      const { update, notes } = combineGroups(readImportGroups(pendingImport, current), keys, current)
       const settings = updateSettings(update)
+      pendingImport = null
       schedulePolling()
       void refreshBoard()
+      send('automations', scheduler.view())
       return { settings, notes }
     } catch (err) {
       return { error: (err as Error).message }
@@ -220,17 +279,21 @@ function registerIpc(): void {
     await shell.openPath(path)
   })
   ipcMain.handle('runs:get', () => runner.list())
-  ipcMain.handle('runs:start', (_e, issueId: string) => {
+  ipcMain.handle('runs:start', (_e, issueId: string, setName?: string) => {
     const s = getSettings()
     if (!s.repoPath) return { error: 'Set the repo path in Settings first.' }
     const issue = board.issues.find((i) => i.id === issueId)
     if (!issue) return { error: 'Ticket not found on the board. Try Sync Linear.' }
     if (runner.isBusy(issue.id)) return { error: `${issue.identifier} already has a run going.` }
-    const set = setForState(loadSteps(s.repoPath), issue.stateName)
-    if (!set) return { error: `No set of steps includes "${issue.stateName}".` }
+    const sets = setsForState(loadSteps(s.repoPath), issue.stateName)
+    if (!sets.length) return { error: `No set of steps includes "${issue.stateName}".` }
+    const set = setName ? sets.find((x) => x.name === setName) : sets.length === 1 ? sets[0] : undefined
+    if (!set) return { error: setName ? `"${setName}" doesn't cover "${issue.stateName}" any more.` : `Pick which steps to run: ${sets.map((x) => x.label || x.name).join(' or ')}.` }
     return runner.start(issue, set)
   })
   ipcMain.handle('runs:stop', (_e, runId: string) => runner.stop(runId))
+  ipcMain.handle('runs:reply', (_e, runId: string, text: string) => runner.reply(runId, String(text ?? '')))
+  ipcMain.handle('runs:finishStep', (_e, runId: string) => runner.finishStep(runId))
   ipcMain.handle('runs:openLog', async (_e, runId: string) => {
     const run = runner.get(runId)
     if (run) await shell.openPath(run.logFile)
@@ -287,6 +350,7 @@ function createWindow(): void {
       sandbox: false
     }
   })
+  win.on('focus', () => win?.flashFrame(false))
   if (process.env['ELECTRON_RENDERER_URL']) {
     void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
@@ -295,10 +359,14 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // Windows only shows notifications for apps with an ID (matches the installer's appId).
+  if (process.platform === 'win32') app.setAppUserModelId('dev.nightshift.app')
   registerIpc()
   createWindow()
   void refreshBoard()
   schedulePolling()
+  // Schedules are checked every 30s; watch automations also check after each Linear sync.
+  setInterval(() => void scheduler.tick(), 30_000)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

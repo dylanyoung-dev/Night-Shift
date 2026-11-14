@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { BoardData, IssueUpdate, LinearIssue, Run, Settings } from '../../shared/types'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { isActiveRun, setLabel, type BoardData, type IssueUpdate, type LinearIssue, type Run, type Settings, type StepChoice, type StepsFile } from '../../shared/types'
 import Sidebar, { View } from './components/Sidebar'
 import Board from './components/Board'
 import RunPanel from './components/RunPanel'
 import LogView from './components/LogView'
 import StepsView from './components/StepsView'
 import SettingsView from './components/SettingsView'
+import ProjectsView from './components/ProjectsView'
+import AutomationsView from './components/AutomationsView'
 import RunsView from './components/RunsView'
 import FilterBar, { applyFilters, NO_FILTERS, type Filters } from './components/FilterBar'
 import BranchPicker from './components/BranchPicker'
@@ -22,8 +24,9 @@ export default function App(): JSX.Element {
   const [message, setMessage] = useState<string | null>(null)
   const [logRunId, setLogRunId] = useState<string | null>(null)
   const [filters, setFilters] = useState<Filters>(NO_FILTERS)
+  const [steps, setSteps] = useState<StepsFile | null>(null)
+  const [startMenu, setStartMenu] = useState(false)
   const [switchingTo, setSwitchingTo] = useState<string | null>(null) // project name while its tickets load
-  const [focusProjects, setFocusProjects] = useState(false)
   const shownBoard = useMemo(() => ({ ...board, issues: applyFilters(board.issues, filters) }), [board, filters])
 
   // Switching project saves it (so it sticks) and main reloads the board for it.
@@ -56,6 +59,8 @@ export default function App(): JSX.Element {
     })
     void api.getBoard().then(setBoard)
     void api.getRuns().then(setRuns)
+    const offSettings = api.onSettings(setSettings) // e.g. an automation switched itself off
+    const offOpenRun = api.onOpenRun((runId) => setLogRunId(runId)) // a notification was clicked
     const offBoard = api.onBoard((b) => {
       setBoard(b)
       setSwitchingTo(null)
@@ -67,6 +72,8 @@ export default function App(): JSX.Element {
     const timer = setInterval(() => setTick((t) => t + 1), 1000) // keeps durations moving
     return () => {
       offBoard()
+      offSettings()
+      offOpenRun()
       offRuns()
       offOut()
       clearInterval(timer)
@@ -85,8 +92,9 @@ export default function App(): JSX.Element {
 
   const issue = board.issues.find((i) => i.id === selectedIssue) ?? null
   const run = selectedIssue ? latestRun.get(selectedIssue) ?? null : null
-  const runActive = Boolean(run && (run.status === 'running' || run.status === 'queued'))
-  const activeRuns = runs.filter((r) => r.status === 'running' || r.status === 'queued')
+  const runActive = Boolean(run && isActiveRun(run.status))
+  const activeRuns = runs.filter((r) => isActiveRun(r.status))
+  const needsYou = runs.filter((r) => r.status === 'waiting')
 
   // Shows the change right away, then main replaces the card with Linear's copy.
   // On failure main has already put Linear's version back; the banner says why.
@@ -97,8 +105,23 @@ export default function App(): JSX.Element {
     else setMessage(null)
   }
 
-  async function start(issueId: string): Promise<void> {
-    const res = await api.startRun(issueId)
+  // Sets of steps, reloaded after each sync and when leaving the Steps page (edits show at once).
+  useEffect(() => {
+    if (view !== 'steps') void api.getSteps().then(setSteps)
+  }, [board.fetchedAt, view])
+
+  const setsFor = useCallback(
+    (stateName: string): StepChoice[] =>
+      (steps?.sets ?? [])
+        .filter((s) => s.states.some((st) => st.toLowerCase() === stateName.toLowerCase()))
+        .map((s) => ({ name: s.name, label: setLabel(s) })),
+    [steps]
+  )
+  const issueSets = issue ? setsFor(issue.stateName) : []
+
+  async function start(issueId: string, setName?: string): Promise<void> {
+    setStartMenu(false)
+    const res = await api.startRun(issueId, setName)
     if ('error' in res) setMessage(res.error)
     else {
       setMessage(null)
@@ -112,10 +135,10 @@ export default function App(): JSX.Element {
         view={view}
         onView={(v) => {
           setLogRunId(null)
-          setFocusProjects(false)
           setView(v)
         }}
-        running={runningCount + queuedCount}
+        running={activeRuns.length}
+        needsYou={needsYou.length}
         teamKey={settings?.linearTeamKey}
         projects={settings?.projects ?? []}
         linearProjects={board.team?.projects ?? []}
@@ -123,8 +146,7 @@ export default function App(): JSX.Element {
         onProject={(id) => void chooseProject(id)}
         onManageProjects={() => {
           setLogRunId(null)
-          setFocusProjects(true)
-          setView('settings')
+          setView('projects')
         }}
       />
       {logRun && (
@@ -149,6 +171,17 @@ export default function App(): JSX.Element {
                 />
               )}
               {switchingTo && <span className="status">Loading {switchingTo}…</span>}
+              {needsYou.length > 0 && (
+                <button
+                  type="button"
+                  className="needs-chip"
+                  title={needsYou.map((r) => `${r.identifier}: ${r.waiting?.reason ?? ''}`).join('\n')}
+                  onClick={() => setLogRunId(needsYou[0].id)}
+                >
+                  <span className="pulse" aria-hidden="true" />
+                  {needsYou.length === 1 ? `${needsYou[0].identifier} needs you` : `${needsYou.length} runs need you`}
+                </button>
+              )}
               <span className="status">
                 <span className="dot" style={{ background: runningCount ? '#3fb950' : '#3a3f4b' }} />
                 Local {runningCount} of {settings?.maxConcurrent ?? 0} running{queuedCount ? ` · ${queuedCount} queued` : ''}
@@ -160,15 +193,32 @@ export default function App(): JSX.Element {
                 <button className="btn" type="button" onClick={() => void api.refreshBoard()}>
                   Sync Linear
                 </button>
-                <button
-                  className="btn primary"
-                  type="button"
-                  disabled={!issue || runActive}
-                  title={issue ? `Run steps for ${issue.identifier}` : 'Select a ticket first'}
-                  onClick={() => issue && void start(issue.id)}
-                >
-                  Start run
-                </button>
+                <span className="start-run">
+                  <button
+                    className="btn primary"
+                    type="button"
+                    disabled={!issue || runActive || !issueSets.length}
+                    aria-haspopup={issueSets.length > 1 ? 'menu' : undefined}
+                    aria-expanded={issueSets.length > 1 ? startMenu : undefined}
+                    title={!issue ? 'Select a ticket first' : !issueSets.length ? `No steps for ${issue.stateName}` : `Run steps for ${issue.identifier}`}
+                    onClick={() => {
+                      if (!issue) return
+                      if (issueSets.length > 1) setStartMenu((o) => !o)
+                      else void start(issue.id, issueSets[0]?.name)
+                    }}
+                  >
+                    {issueSets.length > 1 ? 'Start run ▾' : issueSets[0] ? `Start: ${issueSets[0].label}` : 'Start run'}
+                  </button>
+                  {startMenu && issue && issueSets.length > 1 && (
+                    <span className="start-menu" role="menu">
+                      {issueSets.map((s) => (
+                        <button key={s.name} type="button" role="menuitem" className="issue-menu-item" onClick={() => void start(issue.id, s.name)}>
+                          <span className="lbl">{s.label}</span>
+                        </button>
+                      ))}
+                    </span>
+                  )}
+                </span>
               </div>
             </header>
             {board.error && <div className="banner">{board.error}</div>}
@@ -185,7 +235,8 @@ export default function App(): JSX.Element {
               latestRun={latestRun}
               selectedIssue={selectedIssue}
               onSelect={setSelectedIssue}
-              onStart={(id) => void start(id)}
+              onStart={(id, setName) => void start(id, setName)}
+              setsFor={setsFor}
               onUpdate={(id, update) => void updateIssue(id, update)}
             />
           </div>
@@ -194,7 +245,8 @@ export default function App(): JSX.Element {
             issue={issue}
             run={run}
             log={run ? logs[run.id] ?? run.logTail : ''}
-            onStart={(id) => void start(id)}
+            sets={issue ? setsFor(issue.stateName) : []}
+            onStart={(id, setName) => void start(id, setName)}
             onStop={(id) => void api.stopRun(id)}
             onOpenLog={setLogRunId}
             onOpenLinear={(url) => void api.openInBrowser(url)}
@@ -220,12 +272,21 @@ export default function App(): JSX.Element {
       )}
       {!logRun && view === 'steps' && <StepsView settings={settings} states={board.allStates?.length ? board.allStates : board.states} />}
       {!logRun && view === 'settings' && settings && (
-        <SettingsView
-          key={settings.projects.map((p) => p.id).join()}
+        <SettingsView settings={settings} onSaved={setSettings} />
+      )}
+      {!logRun && view === 'automations' && settings && (
+        <AutomationsView
+          settings={settings}
+          states={board.allStates?.length ? board.allStates : board.states}
+          onSaved={setSettings}
+        />
+      )}
+      {!logRun && view === 'projects' && settings && (
+        <ProjectsView
           settings={settings}
           linearProjects={board.team?.projects ?? []}
-          focusProjects={focusProjects}
           onSaved={setSettings}
+          onShow={(id) => void chooseProject(id)}
         />
       )}
     </div>
