@@ -303,3 +303,25 @@ button.prop:disabled:hover { background: transparent; color: var(--text-2); }
 .branch-menu .mono-lbl { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px; }
 .branch-menu .taken { font-size: 11px; color: var(--muted); }
 .step-warn { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 6px 0 0 34px; font-size: 12px; color: #f2c46d; }
+
+/* Settings: sections with a contents list on the right */
+.settings-page { padding-top: 0; }
+.settings-header { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 20px 0 12px; margin-bottom: 0; border-bottom: 1px solid var(--line); }
+.settings-layout { display: grid; grid-template-columns: minmax(0, 880px) 200px; gap: 40px; align-items: start; }
+.settings-main { min-width: 0; padding-bottom: 50vh; } /* lets the last section scroll to the top */
+.settings-section { padding: 28px 0 8px; border-bottom: 1px solid var(--line); scroll-margin-top: 80px; }
+.settings-section:last-child { border-bottom: 0; }
+.settings-section h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+.section-intro { margin: 0; font-size: 12px; color: var(--muted); max-width: 640px; }
+.settings-section .form { margin-top: 16px; max-width: none; }
+.settings-section .projects-section { background: none; border: 0; padding: 0; }
+.settings-toc { position: sticky; top: 92px; display: flex; flex-direction: column; gap: 2px; padding-top: 28px; }
+.settings-toc .listlabel { padding: 0 10px 8px; }
+.toc-link { display: block; padding: 6px 10px; border-radius: 6px; font-size: 13px; color: var(--text-2); text-decoration: none; border-left: 2px solid transparent; }
+.toc-link:hover { background: #181b22; color: var(--text); }
+.toc-link.active { color: #fff; background: #1a2030; border-left-color: var(--accent-line); }
+.share-row { flex-wrap: wrap; }
+@media (max-width: 1180px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); }
+  .settings-toc { display: none; }
+}

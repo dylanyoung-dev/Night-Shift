@@ -3,6 +3,8 @@ Project Night Shift a tool to help me run/manage my Agentic Software Factory.
 
 Electron app that shows the Linear board and the agent runs side by side, and runs scripted steps (worktree, `npm ci`, Linear moves) before handing off to Claude Code.
 
+![Night Shift board: Linear columns for the AmplifyUP project, with a finished build run on IGN-488](docs/board.png)
+
 ## Run it
 
 Needs Node 22 or later (tested on Node 24 with Electron 45) and Git. Electron downloads its binary the first time it runs.
