@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { isActiveRun, type LinearIssue, type Run, type StepChoice } from '../../../shared/types'
 import Composer from './Composer'
+import LogText from './LogText'
 import { duration, groupSteps, runColor, runLabel, stepColor, stripAnsi } from '../util'
 
 interface Props {
@@ -76,13 +77,14 @@ export default function RunPanel({ issue, run, log, sets, onStart, onStop, onOpe
 
           <div className="grouplabel">Live log</div>
           <pre className="log" ref={logRef}>
-            {stripAnsi(log) || 'No output yet.'}
+            {stripAnsi(log) ? <LogText text={stripAnsi(log)} /> : 'No output yet.'}
           </pre>
           <Composer run={run} compact />
         </>
       )}
 
       <div className="actions">
+        {issue && !active && sets.length > 0 && <span className="listlabel actions-label">Actions</span>}
         {issue &&
           !active &&
           sets.map((s, i) => (
@@ -90,7 +92,7 @@ export default function RunPanel({ issue, run, log, sets, onStart, onStop, onOpe
               {s.label}
             </button>
           ))}
-        {issue && !active && !sets.length && <span className="note">No steps for {issue.stateName}. Add some on the Steps page.</span>}
+        {issue && !active && !sets.length && <span className="note">No actions for {issue.stateName}. Add one on the Actions page.</span>}
         {run && active && (
           <button className="btn danger" type="button" onClick={() => onStop(run.id)}>
             Stop run

@@ -3,12 +3,14 @@ import { spawn, ChildProcess } from 'child_process'
 import type { Writable } from 'stream'
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
 import { isAbsolute, join, normalize } from 'path'
-import { DEFAULT_WORKTREE_PATH, isActiveRun } from '../shared/types'
+import { CLAUDE_RUN_FLAGS, DEFAULT_WORKTREE_PATH, isActiveRun, resumableStep } from '../shared/types'
 import type { LinearIssue, Run, RunStep, StepDef, StepSet, WorktreeMode } from '../shared/types'
 import { ClaudeStreamFormatter, needsYou, parseClaudeCommand } from './claudeStream'
+import { planAfterRun, type FailurePlan } from './failure'
 
 const TAIL_CHARS = 20000
 const AUTO_RERUN_HOURS = 12
+const RECOVER_SESSIONS = 60 // recent runs checked on start for a Claude session to continue
 
 export interface RunnerDeps {
   getRepoPath(): string
@@ -20,6 +22,8 @@ export interface RunnerDeps {
   onRuns(runs: Run[]): void
   onOutput(runId: string, chunk: string): void
   onWaiting(run: Run): void // a Claude step needs the person
+  applyFailurePlan(issueId: string, plan: FailurePlan): Promise<{ removedLabel: boolean }>
+  getSet(name: string): StepSet | undefined // the action a run came from, by name (for continuing a run)
 }
 
 interface Active {
@@ -78,6 +82,61 @@ export class Runner {
     a.stdin.end()
     if (a.run.status === 'waiting') this.resume(a, 'Finished')
     return { ok: true }
+  }
+
+  // A reply to a run that has ended: resume its last Claude session with the message, as a new
+  // "Reply" step on the same run, so the log and history carry on in one place.
+  continueRun(runId: string, text: string): { ok: true } | { error: string } {
+    const run = this.get(runId)
+    const msg = text.trim()
+    if (!run) return { error: 'That run is no longer in the history.' }
+    if (!msg) return { error: 'Type a message first.' }
+    if (this.active.has(runId)) return this.reply(runId, msg)
+    if (isActiveRun(run.status)) return { error: 'This run is still queued.' }
+    if (this.isBusy(run.issueId)) return { error: `${run.identifier} already has a run going. Reply once it ends.` }
+    const from = resumableStep(run)
+    if (from < 0) return { error: 'This run has no Claude session to pick up again.' }
+    const src = run.steps[from]
+    const def = this.deps.getSet(run.stepsName) ?? { name: run.stepsName, states: [], steps: [] }
+    const rs: RunStep = { name: 'Reply', type: 'claude', status: 'running', startedAt: Date.now(), sessionId: src.sessionId, cwd: src.cwd }
+    run.steps.push(rs)
+    run.currentStep = run.steps.length - 1
+    run.status = 'running'
+    run.endedAt = undefined
+    run.waiting = null
+    const a: Active = { run, def }
+    this.active.set(run.id, a)
+    this.changed()
+    void this.continueSession(a, rs, src, msg).finally(() => {
+      this.active.delete(run.id)
+      this.changed()
+      this.pump()
+    })
+    return { ok: true }
+  }
+
+  private async continueSession(a: Active, rs: RunStep, src: RunStep, msg: string): Promise<void> {
+    const { run } = a
+    rs.command = `claude -p --resume ${src.sessionId} (your reply)`
+    this.log(run, `\n▸ Reply: picking up the Claude session from "${src.name}"\n▶ You: ${msg.split('\n').join('\n  ')}\n  (in ${src.cwd})\n`)
+    let ok = false
+    try {
+      ok = (await this.shell(a, src.command ?? '', src.cwd!, true, { sessionId: src.sessionId!, prompt: msg })) === 0
+    } catch (err) {
+      this.log(run, `Error: ${(err as Error).message}\n`)
+    }
+    rs.endedAt = Date.now()
+    if (a.stopRequested) {
+      rs.status = 'failed'
+      run.status = 'stopped'
+      this.log(run, '\nStopped by you.\n')
+    } else {
+      rs.status = ok ? 'done' : 'failed'
+      run.status = ok ? 'done' : 'failed'
+    }
+    run.endedAt = Date.now()
+    this.log(run, `\nRun ${run.status}.\n`)
+    await this.applyAfterRun(run, a.def)
   }
 
   private resume(a: Active, _why: string): void {
@@ -190,6 +249,7 @@ export class Runner {
           const cmd = this.expand(step.run ?? '', run)
           rs.command = cmd
           const cwd = this.cwdFor(step, run, worktreeReady)
+          if (step.type === 'claude') rs.cwd = cwd
           this.log(run, `\n▸ ${step.name}\n$ ${cmd}\n  (in ${cwd})\n`)
           ok = (await this.shell(a, cmd, cwd, step.type === 'claude')) === 0
         }
@@ -220,6 +280,20 @@ export class Runner {
     if (run.status === 'running') run.status = 'done'
     run.endedAt = Date.now()
     this.log(run, `\nRun ${run.status}.\n`)
+    await this.applyAfterRun(run, def)
+  }
+
+  // Failed: label the ticket, comment and send it back, as the set's onFailure says. Done: clear the label.
+  private async applyAfterRun(run: Run, def: StepSet): Promise<void> {
+    const plan = planAfterRun(run, def, this.runs)
+    if (!plan) return
+    try {
+      const done = await this.deps.applyFailurePlan(run.issueId, plan)
+      if (plan.note) this.log(run, `${plan.note}\n`)
+      else if (done.removedLabel) this.log(run, `Removed "${plan.removeLabel}" from ${run.identifier} in Linear.\n`)
+    } catch (err) {
+      this.log(run, `Could not update ${run.identifier} in Linear after the run: ${(err as Error).message}\n`)
+    }
   }
 
   // In agent mode Night Shift has no worktree, so steps that need one are left out.
@@ -258,15 +332,28 @@ export class Runner {
     return cmd.replace(/\$(TICKET|ID|BRANCH|BASE|WORKTREE_MODE|WORKTREE|REPO)\b/g, (_, k: string) => v[k])
   }
 
-  private shell(a: Active, cmd: string, cwd: string, claude = false): Promise<number> {
+  private shell(a: Active, cmd: string, cwd: string, claude = false, resume?: { sessionId: string; prompt: string }): Promise<number> {
     return new Promise((resolve) => {
       const env: NodeJS.ProcessEnv = { ...process.env }
       for (const [k, val] of Object.entries(this.vars(a.run))) env[`NS_${k}`] = val
+      // `claude -p` stops background agents 10 minutes after the main turn ends. A /build that hands
+      // work to a background agent would be cut off mid-way, so wait for them (Stop still works).
+      if (claude && env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS === undefined) env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = '0'
+      let bgStopped = false
+      const watchCutOff = (text: string): void => {
+        if (claude && /Background tasks still running .* stopping them/.test(text)) bgStopped = true
+      }
       // A `claude -p "<prompt>"` step runs as a session: the prompt goes in over stdin and stdin
       // stays open, so the person can reply. Everything else gets no stdin (it runs unattended).
-      const session = claude ? parseClaudeCommand(cmd) : null
+      // A reply to a finished run resumes its session with the original step's flags.
+      const session = resume
+        ? { prompt: resume.prompt, flags: (parseClaudeCommand(cmd) ?? parseClaudeCommand(`claude -p "x" ${CLAUDE_RUN_FLAGS}`))!.flags }
+        : claude
+          ? parseClaudeCommand(cmd)
+          : null
+      const resumeFlag = resume ? ` --resume ${resume.sessionId}` : ''
       const command = session
-        ? `claude -p --input-format stream-json --output-format stream-json --verbose ${session.flags}`.trim()
+        ? `claude -p${resumeFlag} --input-format stream-json --output-format stream-json --verbose ${session.flags}`.trim()
         : cmd
       const child = spawn(command, { cwd, env, shell: true, windowsHide: true, stdio: [session ? 'pipe' : 'ignore', 'pipe', 'pipe'] })
       a.child = child
@@ -300,6 +387,13 @@ export class Runner {
       const rawFile = a.run.logFile.replace(/\.log$/, '.events.jsonl')
       child.stdout?.on('data', (d: Buffer) => {
         const text = d.toString()
+        watchCutOff(text)
+        // Keep the Claude session id so the run can be continued after it ends.
+        const rs = a.run.steps[a.run.currentStep]
+        if (claude && rs && !rs.sessionId) {
+          const sid = /"session_id"\s*:\s*"([0-9a-f-]{36})"/.exec(text)?.[1]
+          if (sid) rs.sessionId = sid
+        }
         if (!fmt) return this.log(a.run, text)
         try {
           appendFileSync(rawFile, text)
@@ -311,7 +405,11 @@ export class Runner {
         // Act on turn ends only after their summary is in the log, so "Needs you" reads last.
         for (const ev of fmt.drainResults()) onResult(ev)
       })
-      child.stderr?.on('data', (d: Buffer) => this.log(a.run, d.toString()))
+      child.stderr?.on('data', (d: Buffer) => {
+        const text = d.toString()
+        watchCutOff(text)
+        this.log(a.run, text)
+      })
       child.on('error', (err) => {
         this.log(a.run, `Could not start: ${err.message}\n`)
         resolve(1)
@@ -328,6 +426,11 @@ export class Runner {
             a.run.waiting = null
           }
           this.changed()
+        }
+        if (bgStopped && !a.stopRequested) {
+          // Claude exits 0 here, but its background agents were killed mid-task: don't call it done.
+          this.log(a.run, '\n✗ Claude stopped its background agents before they finished, so this step is incomplete. Run it again to pick up where it left off.\n')
+          return resolve(code || 1)
         }
         resolve(code ?? 1)
       })
@@ -361,6 +464,7 @@ export class Runner {
           r.steps.forEach((s) => (s.status === 'running' || s.status === 'waiting') && (s.status = 'failed'))
         }
       }
+      for (const r of runs.slice(0, RECOVER_SESSIONS)) recoverSession(r)
       return runs
     } catch {
       return []
@@ -409,3 +513,35 @@ function killTree(pid: number): void {
 }
 
 export type { RunStep }
+
+// Runs saved before session ids were kept: find the last Claude step's session in the raw events
+// and its folder in the log, so those runs can be continued too.
+function recoverSession(run: Run): void {
+  if (resumableStep(run) >= 0) return
+  if (!run.steps.some((s) => s.type === 'claude')) return
+  try {
+    const events = readFileSync(run.logFile.replace(/\.log$/, '.events.jsonl'), 'utf8')
+    const ids = [...events.matchAll(/"session_id"\s*:\s*"([0-9a-f-]{36})"/g)]
+    const sid = ids[ids.length - 1]?.[1]
+    if (!sid) return
+    const lines = readFileSync(run.logFile, 'utf8').split(/\r?\n/)
+    // The latest Claude step whose header is in the log: "▸ <name>", "$ <command>", "  (in <folder>)".
+    for (let idx = run.steps.length - 1; idx >= 0; idx--) {
+      const st = run.steps[idx]
+      if (st.type !== 'claude' || st.status === 'pending' || st.status === 'skipped') continue
+      let cwd: string | undefined
+      for (let i = 0; i + 2 < lines.length; i++) {
+        if (lines[i] === `▸ ${st.name}` && lines[i + 1].startsWith('$ ') && lines[i + 2].startsWith('  (in ') && lines[i + 2].endsWith(')')) {
+          cwd = lines[i + 2].slice('  (in '.length, -1)
+        }
+      }
+      if (cwd) {
+        st.sessionId = sid
+        st.cwd = cwd
+        return
+      }
+    }
+  } catch {
+    /* no events or log: leave it */
+  }
+}

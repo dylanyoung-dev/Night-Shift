@@ -148,7 +148,7 @@ export class AutomationScheduler {
     const targets = a.states
       .map((name) => ({ name, state: all.find((x) => x.name.toLowerCase() === name.toLowerCase()), set: this.deps.setForState(steps, name, a.stepSet) ?? this.deps.setForState(steps, name) }))
       .filter((t) => t.state && t.set) as { name: string; state: LinearState; set: StepSet }[]
-    if (!targets.length) return { lastResult: 'None of its states has a set of steps.', retryAt: now + WAIT_RETRY_MS }
+    if (!targets.length) return { lastResult: 'None of its states has an action.', retryAt: now + WAIT_RETRY_MS }
 
     const project = a.projectId ? s.projects.find((p) => p.id === a.projectId) : undefined
     if (a.projectId && !project) return { lastResult: 'Its project was deleted.', retryAt: now + WAIT_RETRY_MS }

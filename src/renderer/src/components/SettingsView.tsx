@@ -19,6 +19,7 @@ interface Props {
 const STATE_TYPES = ['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled']
 
 const SECTIONS = [
+  { id: 'appearance', label: 'Appearance' },
   { id: 'linear', label: 'Linear' },
   { id: 'repo', label: 'Repository' },
   { id: 'worktrees', label: 'Worktrees' },
@@ -31,7 +32,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
   const [apiKey, setApiKey] = useState('')
   const [saved, setSaved] = useState(false)
   const [dirty, setDirty] = useState(false)
-  const [active, setActive] = useState('linear')
+  const [active, setActive] = useState('appearance')
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Highlight the section nearest the top of the scroll area.
@@ -103,6 +104,13 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
     setDirty(false)
   }
 
+  // Theme saves on its own, without the Save button, so the change shows at once.
+  async function chooseTheme(theme: Settings['theme']): Promise<void> {
+    setForm((f) => ({ ...f, theme }))
+    const saved = await window.nightShift.saveSettings({ theme })
+    onSaved(saved)
+  }
+
   const [fileMsg, setFileMsg] = useState<{ text: string; warn?: boolean } | null>(null)
 
   async function exportFile(): Promise<void> {
@@ -161,6 +169,34 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
 
       <div className="settings-layout">
         <div className="settings-main">
+        <section id="appearance" className="settings-section" aria-labelledby="appearance-title">
+          <div className="section-side">
+            <h2 id="appearance-title">Appearance</h2>
+            <p className="section-intro">Applies straight away. This machine only; it isn&apos;t in the exported file.</p>
+          </div>
+          <div className="form">
+            <div className="field wide">
+              Theme
+              <div className="choices three" role="radiogroup" aria-label="Theme">
+                {(
+                  [
+                    ['system', 'Match Windows', 'Follows your Windows light or dark setting.'],
+                    ['dark', 'Dark', 'Night Shift stays dark.'],
+                    ['light', 'Light', 'Night Shift stays light.']
+                  ] as const
+                ).map(([value, title, sub]) => (
+                  <label key={value} className={`choice${form.theme === value ? ' active' : ''}`}>
+                    <input type="radio" name="theme" checked={form.theme === value} onChange={() => void chooseTheme(value)} />
+                    <span>
+                      <strong>{title}</strong>
+                      <span className="sub">{sub}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
         <section id="linear" className="settings-section" aria-labelledby="linear-title">
           <div className="section-side">
             <h2 id="linear-title">Linear</h2>
@@ -213,6 +249,19 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
                     {t === 'canceled' ? 'canceled & duplicate' : t}
                   </label>
                 ))}
+              </div>
+            </div>
+            <div className="field wide">
+              Column order
+              <div className="row-actions">
+                <span className="note">
+                  {form.columnOrder?.length ? 'Your own order. Drag column headers on the board to change it.' : "Linear's order. Drag column headers on the board to change it."}
+                </span>
+                {(form.columnOrder?.length ?? 0) > 0 && (
+                  <button className="btn small" type="button" onClick={() => set('columnOrder', [])}>
+                    Reset to Linear&apos;s order
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -308,7 +357,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
         <section id="worktrees" className="settings-section" aria-labelledby="worktrees-title">
           <div className="section-side">
             <h2 id="worktrees-title">Worktrees</h2>
-            <p className="section-intro">Where each run works. A set of steps can override this on the Steps page.</p>
+            <p className="section-intro">Where each run works. An action can override this on the Actions page.</p>
           </div>
           <div className="form">
             <div className="field wide">
@@ -359,7 +408,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
         <section id="runs" className="settings-section" aria-labelledby="runs-title">
           <div className="section-side">
             <h2 id="runs-title">Runs</h2>
-            <p className="section-intro">How many local runs can go at once, across all sets of steps.</p>
+            <p className="section-intro">How many local runs can go at once, across all actions.</p>
           </div>
           <div className="form">
             <label className="field">

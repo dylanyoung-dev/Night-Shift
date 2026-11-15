@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import YAML from 'yaml'
-import { DEFAULT_CLAUDE_COMMAND, setLabel, type StepDef, type StepSet, type StepsFile, type WorktreeConfig } from '../shared/types'
+import { DEFAULT_CLAUDE_COMMAND, setLabel, type OnFailure, type StepDef, type StepSet, type StepsFile, type WorktreeConfig } from '../shared/types'
 
 // Steps live in the repo the agents work in, so cloud runs and changes via PR use the same file.
 export const STEPS_RELATIVE_PATH = join('.nightshift', 'steps.yml')
@@ -15,7 +15,8 @@ export const DEFAULT_SETS: StepSet[] = [
       { name: 'Install packages', type: 'script', run: 'npm ci', onFail: 'stop', only: 'nightshift' },
       { name: 'Move to Building', type: 'linear', moveTo: 'Building', onFail: 'continue' },
       { name: 'Build', type: 'claude', run: DEFAULT_CLAUDE_COMMAND, onFail: 'stop' }
-    ]
+    ],
+    onFailure: { moveTo: 'Ready to Build' }
   }
 ]
 
@@ -44,14 +45,28 @@ function normalizeWorktree(raw: unknown): WorktreeConfig | undefined {
   return out.mode || out.path ? out : undefined
 }
 
+function normalizeOnFailure(raw: unknown): OnFailure | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Raw
+  const out: OnFailure = {}
+  if (typeof r.moveTo === 'string' && r.moveTo.trim()) out.moveTo = r.moveTo.trim()
+  if (typeof r.label === 'string' && r.label.trim()) out.label = r.label.trim()
+  if (r.comment === false) out.comment = false
+  const retries = Number(r.retries)
+  if (r.retries !== undefined && r.retries !== null && Number.isFinite(retries) && retries >= 0) out.retries = Math.floor(retries)
+  return out.moveTo || out.label || out.comment === false || out.retries !== undefined ? out : undefined
+}
+
 function normalizeSet(raw: Raw, fallbackName: string, states: string[]): StepSet {
   const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : undefined
+  const onFailure = normalizeOnFailure(raw.onFailure)
   return {
     name: String(raw.name ?? fallbackName).trim() || fallbackName,
     ...(label ? { label } : {}),
     states,
     worktree: normalizeWorktree(raw.worktree),
-    steps: (Array.isArray(raw.steps) ? (raw.steps as Raw[]) : []).map(normalizeStep)
+    steps: (Array.isArray(raw.steps) ? (raw.steps as Raw[]) : []).map(normalizeStep),
+    ...(onFailure ? { onFailure } : {})
   }
 }
 
@@ -77,8 +92,8 @@ export function checkSets(sets: StepSet[]): string[] {
   const owner = new Map<string, string>()
   const names = new Set<string>()
   for (const set of sets) {
-    if (!set.name.trim()) problems.push('Every set of steps needs a name.')
-    else if (names.has(set.name.trim().toLowerCase())) problems.push(`Two sets are named "${set.name}".`)
+    if (!set.name.trim()) problems.push('Every action needs a name.')
+    else if (names.has(set.name.trim().toLowerCase())) problems.push(`Two actions are named "${set.name}".`)
     names.add(set.name.trim().toLowerCase())
     // A state can have several sets, but their buttons must read differently.
     for (const state of set.states) {
@@ -107,7 +122,7 @@ export function loadSteps(repoPath: string): StepsFile {
     const problems = checkSets(sets)
     // Older files could start runs on their own; that moved to Automations and is ignored now.
     if (/^\s*trigger:\s*auto\b/m.test(text)) {
-      problems.push('A set is marked "trigger: auto". Sets no longer start runs on their own; set that up on the Automations page. Saving here removes it.')
+      problems.push('An action is marked "trigger: auto". Actions no longer start runs on their own; set that up on the Automations page. Saving here removes it.')
     }
     return { path, sets, ...(problems.length ? { problems } : {}) }
   } catch (err) {
@@ -138,17 +153,20 @@ function stepToYaml(st: StepDef): Raw {
   return out
 }
 
-const HEADER = `# Night Shift steps. Edited from the Steps page or by hand; either way it changes through PRs.
-# Each set runs for tickets in any of its states and shows as a button (label) on their cards.
-# A state can have several sets, each with its own button label.
+const HEADER = `# Night Shift actions. Edited from the Actions page or by hand; either way it changes through PRs.
+# Each entry under "sets:" is an action: a named list of steps for tickets in any of its states,
+# shown in their cards' Actions menu (label). A state can have several actions, each with its own label.
 #
 # Variables: $TICKET (IGN-644) $ID (ign-644) $BRANCH $BASE $WORKTREE $REPO $WORKTREE_MODE
 #   (also set as environment variables NS_TICKET, NS_ID, ...)
-# Sets of steps only say what runs. To start runs on their own, use the Automations page.
-# worktree (optional): mode: nightshift | agent, path: "D:/worktrees/$ID"  (overrides Settings)
+# Actions only say what runs. To start runs on their own, use the Automations page.
+# worktree (optional, per action): mode: nightshift | agent, path: "D:/worktrees/$ID"  (overrides Settings)
 # step type: script | claude | linear     onFail: stop | continue
 # cwd: repo | worktree     only: nightshift | agent  (run the step only in that worktree mode)
 # In agent mode, steps that use $WORKTREE or cwd: worktree are skipped.
+# onFailure (optional, per action): when a run fails, label the ticket, comment, and send it back.
+#   moveTo: "Ready to Build"  label: "Agent failed"  comment: true|false  retries: 2
+#   After \`retries\` failures in a row the ticket is left where it is, still labelled.
 `
 
 export function stringifySteps(sets: StepSet[]): string {
@@ -164,6 +182,15 @@ export function stringifySteps(sets: StepSet[]): string {
         out.worktree = wt
       }
       out.steps = set.steps.map(stepToYaml)
+      const f = set.onFailure
+      if (f && (f.moveTo || f.label || f.comment === false || f.retries !== undefined)) {
+        const of: Raw = {}
+        if (f.moveTo) of.moveTo = f.moveTo
+        if (f.label) of.label = f.label
+        if (f.comment === false) of.comment = false
+        if (f.retries !== undefined) of.retries = f.retries
+        out.onFailure = of
+      }
       return out
     })
   }

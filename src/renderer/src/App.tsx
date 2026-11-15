@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { isActiveRun, setLabel, type BoardData, type IssueUpdate, type LinearIssue, type Run, type Settings, type StepChoice, type StepsFile } from '../../shared/types'
+import { isActiveRun, orderStates, setLabel, type BoardData, type IssueUpdate, type LinearIssue, type Run, type Settings, type StepChoice, type StepsFile } from '../../shared/types'
 import Sidebar, { View } from './components/Sidebar'
 import Board from './components/Board'
 import RunPanel from './components/RunPanel'
@@ -9,6 +9,7 @@ import SettingsView from './components/SettingsView'
 import ProjectsView from './components/ProjectsView'
 import AutomationsView from './components/AutomationsView'
 import RunsView from './components/RunsView'
+import UsageView from './components/UsageView'
 import FilterBar, { applyFilters, NO_FILTERS, type Filters } from './components/FilterBar'
 import BranchPicker from './components/BranchPicker'
 
@@ -22,12 +23,28 @@ export default function App(): JSX.Element {
   const [logs, setLogs] = useState<Record<string, string>>({})
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
-  const [logRunId, setLogRunId] = useState<string | null>(null)
+  // Log screens opened on top of the current view, newest last. Back goes to the one before,
+  // then to the view underneath (board, Agents, Run history…).
+  const [logStack, setLogStack] = useState<string[]>([])
+  const logRunId = logStack[logStack.length - 1] ?? null
+  const setLogRunId = (id: string | null): void =>
+    setLogStack((st) => (id === null ? [] : st[st.length - 1] === id ? st : [...st.filter((x) => x !== id), id]))
+  const backFromLog = (): void => setLogStack((st) => st.slice(0, -1))
   const [filters, setFilters] = useState<Filters>(NO_FILTERS)
   const [steps, setSteps] = useState<StepsFile | null>(null)
   const [startMenu, setStartMenu] = useState(false)
   const [switchingTo, setSwitchingTo] = useState<string | null>(null) // project name while its tickets load
-  const shownBoard = useMemo(() => ({ ...board, issues: applyFilters(board.issues, filters) }), [board, filters])
+  const columnOrder = settings?.columnOrder ?? []
+  const shownBoard = useMemo(
+    () => ({ ...board, states: orderStates(board.states, columnOrder), issues: applyFilters(board.issues, filters) }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [board, filters, columnOrder.join('|')]
+  )
+  // Dragging a column header saves the new order (by state name, so it travels with exported settings).
+  function reorderColumns(names: string[]): void {
+    setSettings((s) => (s ? { ...s, columnOrder: names } : s))
+    void api.saveSettings({ columnOrder: names }).then(setSettings)
+  }
 
   // Switching project saves it (so it sticks) and main reloads the board for it.
   async function chooseProject(id: string | null): Promise<void> {
@@ -90,6 +107,12 @@ export default function App(): JSX.Element {
     return map
   }, [runs])
 
+  const runsByIssue = useMemo(() => {
+    const map = new Map<string, Run[]>()
+    for (const r of runs) map.set(r.issueId, [...(map.get(r.issueId) ?? []), r]) // runs come newest first
+    return map
+  }, [runs])
+
   const issue = board.issues.find((i) => i.id === selectedIssue) ?? null
   const run = selectedIssue ? latestRun.get(selectedIssue) ?? null : null
   const runActive = Boolean(run && isActiveRun(run.status))
@@ -105,7 +128,7 @@ export default function App(): JSX.Element {
     else setMessage(null)
   }
 
-  // Sets of steps, reloaded after each sync and when leaving the Steps page (edits show at once).
+  // Actions (sets of steps), reloaded after each sync and when leaving the Actions page (edits show at once).
   useEffect(() => {
     if (view !== 'steps') void api.getSteps().then(setSteps)
   }, [board.fetchedAt, view])
@@ -118,15 +141,18 @@ export default function App(): JSX.Element {
     [steps]
   )
   const issueSets = issue ? setsFor(issue.stateName) : []
+  const logIssue = logRun ? board.issues.find((i) => i.id === logRun.issueId) ?? null : null
 
-  async function start(issueId: string, setName?: string): Promise<void> {
+  async function start(issueId: string, setName?: string): Promise<Run | null> {
     setStartMenu(false)
     const res = await api.startRun(issueId, setName)
-    if ('error' in res) setMessage(res.error)
-    else {
-      setMessage(null)
-      setSelectedIssue(issueId)
+    if ('error' in res) {
+      setMessage(res.error)
+      return null
     }
+    setMessage(null)
+    setSelectedIssue(issueId)
+    return res
   }
 
   return (
@@ -152,10 +178,13 @@ export default function App(): JSX.Element {
       {logRun && (
         <LogView
           run={logRun}
-          issue={board.issues.find((i) => i.id === logRun.issueId) ?? null}
-          onClose={() => setLogRunId(null)}
+          issue={logIssue}
+          onClose={backFromLog}
           onStop={(id) => void api.stopRun(id)}
           onOpenLinear={(url) => void api.openInBrowser(url)}
+          actions={logIssue ? setsFor(logIssue.stateName) : []}
+          // Start the action and follow the new run here.
+          onAction={(setName) => logIssue && void start(logIssue.id, setName).then((r) => r && setLogRunId(r.id))}
         />
       )}
       {!logRun && view === 'board' && (
@@ -200,14 +229,14 @@ export default function App(): JSX.Element {
                     disabled={!issue || runActive || !issueSets.length}
                     aria-haspopup={issueSets.length > 1 ? 'menu' : undefined}
                     aria-expanded={issueSets.length > 1 ? startMenu : undefined}
-                    title={!issue ? 'Select a ticket first' : !issueSets.length ? `No steps for ${issue.stateName}` : `Run steps for ${issue.identifier}`}
+                    title={!issue ? 'Select a ticket first' : !issueSets.length ? `No actions for ${issue.stateName}` : `Run an action on ${issue.identifier}`}
                     onClick={() => {
                       if (!issue) return
                       if (issueSets.length > 1) setStartMenu((o) => !o)
                       else void start(issue.id, issueSets[0]?.name)
                     }}
                   >
-                    {issueSets.length > 1 ? 'Start run ▾' : issueSets[0] ? `Start: ${issueSets[0].label}` : 'Start run'}
+                    {issueSets.length > 1 ? 'Run action ▾' : issueSets[0] ? `Run: ${issueSets[0].label}` : 'Run action'}
                   </button>
                   {startMenu && issue && issueSets.length > 1 && (
                     <span className="start-menu" role="menu">
@@ -233,6 +262,9 @@ export default function App(): JSX.Element {
             <Board
               board={shownBoard}
               latestRun={latestRun}
+              runsByIssue={runsByIssue}
+              onReorderColumns={reorderColumns}
+              onOpenLog={setLogRunId}
               selectedIssue={selectedIssue}
               onSelect={setSelectedIssue}
               onStart={(id, setName) => void start(id, setName)}
@@ -270,6 +302,7 @@ export default function App(): JSX.Element {
           onOpen={(r) => setLogRunId(r.id)}
         />
       )}
+      {!logRun && view === 'usage' && <UsageView />}
       {!logRun && view === 'steps' && <StepsView settings={settings} states={board.allStates?.length ? board.allStates : board.states} />}
       {!logRun && view === 'settings' && settings && (
         <SettingsView settings={settings} onSaved={setSettings} />

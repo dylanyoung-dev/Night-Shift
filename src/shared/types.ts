@@ -62,6 +62,25 @@ export interface AutomationStatus {
   seen?: Record<string, string> // watch: issue id -> state it was picked up in (cleared when it leaves)
 }
 
+// Board columns in the saved order. States not in the order (new in Linear, or never moved) keep
+// their place next to the state that comes before them in Linear.
+export function orderStates<T extends { name: string }>(states: T[], order: string[]): T[] {
+  if (!order.length) return states
+  const key = (n: string): string => n.toLowerCase()
+  const byName = new Map(states.map((s) => [key(s.name), s]))
+  const out: T[] = []
+  for (const n of order) {
+    const s = byName.get(key(n))
+    if (s && !out.includes(s)) out.push(s)
+  }
+  states.forEach((s, i) => {
+    if (out.includes(s)) return
+    const before = states.slice(0, i).reverse().find((p) => out.includes(p))
+    out.splice(before ? out.indexOf(before) + 1 : 0, 0, s)
+  })
+  return out
+}
+
 export interface Settings {
   linearTeamKey: string // e.g. "IGN"
   repoPath: string // local checkout of the repo agents work in
@@ -71,9 +90,11 @@ export interface Settings {
   pollSeconds: number // how often to check Linear
   maxConcurrent: number // local runs at once, across all states
   hiddenStateTypes: string[] // Linear state types left off the board
+  columnOrder: string[] // board columns by state name, as arranged by dragging; empty = Linear's order
   projects: NightShiftProject[]
   activeProjectId: string | null // null = every ticket in the team
   automations: Automation[]
+  theme: 'system' | 'dark' | 'light' // this machine only; not in the exported file
   hasLinearKey: boolean // the key itself never leaves the main process
 }
 
@@ -175,7 +196,19 @@ export interface StepSet {
   states: string[] // Linear state names
   worktree?: WorktreeConfig // overrides the Settings for runs of this set
   steps: StepDef[]
+  onFailure?: OnFailure // what happens to the ticket in Linear when a run of this set fails
 }
+
+// When a run fails (not when you stop it): mark the ticket and send it back so it gets another run.
+export interface OnFailure {
+  moveTo?: string // Linear state to send the ticket back to, e.g. "Ready to Build"
+  label?: string // label added while it's failing; removed when a run of this set succeeds
+  comment?: boolean // post a comment with the failed step and the end of the log (default true)
+  retries?: number // send it back at most this many times in a row; then leave it where it is (default 2)
+}
+
+export const DEFAULT_FAILURE_LABEL = 'Agent failed'
+export const DEFAULT_FAILURE_RETRIES = 2
 
 export interface StepsFile {
   path: string | null // where it was loaded from, null = built-in defaults
@@ -211,6 +244,14 @@ export interface RunStep {
   startedAt?: number
   endedAt?: number
   command?: string
+  sessionId?: string // Claude steps: the Claude Code session, so a finished run can be continued
+  cwd?: string // where the step ran; a session can only be resumed from the same folder
+}
+
+// A finished run can be picked up again if one of its Claude steps has a session to resume.
+export function resumableStep(run: Run): number {
+  for (let i = run.steps.length - 1; i >= 0; i--) if (run.steps[i].sessionId && run.steps[i].cwd) return i
+  return -1
 }
 
 export interface Run {
@@ -263,6 +304,36 @@ export interface ImportPreview {
   groups: { key: ImportGroupKey; label: string; summary: string; notes: string[]; empty: boolean }[]
 }
 
+// Claude Code token usage, read from the transcripts on this machine.
+export interface TokenCounts {
+  input: number
+  output: number
+  cacheWrite: number
+  cacheRead: number
+  messages: number
+}
+export interface UsageDay extends TokenCounts {
+  date: string // YYYY-MM-DD, local time
+  nightShift: number // tokens from sessions Night Shift started
+}
+export interface UsageSlice extends TokenCounts {
+  name: string
+}
+export interface UsageReport {
+  generatedAt: number
+  days: number
+  files: number
+  sources: string[]
+  today: TokenCounts
+  week: TokenCounts // last 7 days including today
+  period: TokenCounts // the chosen range
+  nightShift: TokenCounts // the part of the range from Night Shift runs
+  window: (TokenCounts & { start: number; end: number; perMinute: number }) | null // current 5-hour window
+  daily: UsageDay[]
+  byModel: UsageSlice[]
+  byProject: UsageSlice[]
+}
+
 export interface NightShiftApi {
   getSettings(): Promise<Settings>
   saveSettings(update: SettingsUpdate): Promise<Settings>
@@ -283,6 +354,9 @@ export interface NightShiftApi {
   readLog(runId: string): Promise<string>
   replyToRun(runId: string, text: string): Promise<{ ok: true } | { error: string }>
   finishRunStep(runId: string): Promise<{ ok: true } | { error: string }> // end the Claude session, carry on
+  getUsage?(days: number, refresh?: boolean): Promise<UsageReport>
+  usageProgress?(): Promise<{ done: number; total: number; scanning: boolean }>
+  continueRun?(runId: string, text: string): Promise<{ ok: true } | { error: string }> // reply to a finished run: resume its Claude session (optional: older preloads lack it)
   onOpenRun(cb: (runId: string) => void): () => void // a notification was clicked
   getAutomationStatus(): Promise<Record<string, AutomationStatus>>
   runAutomationNow(id: string): Promise<{ ok: true; message: string } | { error: string }>

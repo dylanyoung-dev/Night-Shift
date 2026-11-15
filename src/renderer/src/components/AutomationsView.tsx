@@ -194,7 +194,7 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
           </div>
         </div>
         <p className="note">
-          Automations start runs for tickets in their states, using each state&apos;s set of steps. They obey the {settings.maxConcurrent}-at-once limit
+          Automations start runs for tickets in their states, using the actions set up for those states. They obey the {settings.maxConcurrent}-at-once limit
           for local runs in Settings.
         </p>
 
@@ -203,7 +203,7 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
             <div className="section-side">
               <h2>Schedule your first agent</h2>
               <p className="section-intro">
-                For example: watch Ready to Build overnight and pick up each ticket as it arrives, or run spec steps for one ticket every hour.
+                For example: watch Ready to Build overnight and pick up each ticket as it arrives, or run a Spec action on one ticket every hour.
               </p>
             </div>
             <div>
@@ -260,7 +260,7 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
             <section className="settings-section" aria-labelledby="au-tickets">
               <div className="section-side">
                 <h2 id="au-tickets">Tickets</h2>
-                <p className="section-intro">Which tickets it works on. Each state runs its own set of steps from the Steps page.</p>
+                <p className="section-intro">Which tickets it works on. Each state runs its own action from the Actions page.</p>
               </div>
               <div className="form single">
                 <label className="field">
@@ -288,12 +288,12 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
                           className={`state-pick${on ? ' on' : ''}`}
                           aria-pressed={on}
                           disabled={!setName && !on}
-                          title={setName ? `Steps: ${setName}` : 'No set of steps for this state. Add one on the Steps page.'}
+                          title={setName ? `Action: ${setName}` : 'No action for this state. Add one on the Actions page.'}
                           onClick={() => change({ states: on ? current.states.filter((n) => n.toLowerCase() !== s.name.toLowerCase()) : [...current.states, s.name] })}
                         >
                           <StatusIcon state={s} />
                           {s.name}
-                          {setName ? <span className="taken">{setName}</span> : <span className="taken">no steps</span>}
+                          {setName ? <span className="taken">{setName}</span> : <span className="taken">no action</span>}
                         </button>
                       )
                     })}
@@ -302,9 +302,9 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
                 </div>
                 {needsSetChoice && (
                   <label className="field">
-                    Steps to run (a chosen state has more than one set)
+                    Action to run (a chosen state has more than one)
                     <select className="input" value={current.stepSet ?? ''} onChange={(e) => change({ stepSet: e.target.value || null })}>
-                      <option value="">Each state&apos;s first set</option>
+                      <option value="">Each state&apos;s first action</option>
                       {chosenSets.map((n) => (
                         <option key={n} value={n}>
                           {n}

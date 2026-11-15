@@ -18,9 +18,11 @@ const defaults: Stored = {
   pollSeconds: 60,
   maxConcurrent: 3,
   hiddenStateTypes: ['backlog', 'completed', 'canceled'],
+  columnOrder: [],
   projects: [],
   activeProjectId: null,
-  automations: []
+  automations: [],
+  theme: 'system'
 }
 
 let cache: Stored | null = null
@@ -130,6 +132,8 @@ export function updateSettings(update: SettingsUpdate): Settings {
   s.projects = cleanProjects(s.projects)
   if (s.activeProjectId && !s.projects.some((p) => p.id === s.activeProjectId)) s.activeProjectId = null
   s.automations = cleanAutomations(s.automations, s.projects)
+  if (s.theme !== 'dark' && s.theme !== 'light') s.theme = 'system'
+  s.columnOrder = Array.isArray(s.columnOrder) ? [...new Set(s.columnOrder.map(String).filter(Boolean))] : []
   if (linearApiKey !== undefined) {
     delete s.linearApiKeyEnc
     delete s.linearApiKeyPlain

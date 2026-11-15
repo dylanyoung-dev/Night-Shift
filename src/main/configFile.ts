@@ -16,7 +16,7 @@ const HEADER = `# Night Shift settings, exported to share with another machine.
 export function exportSettings(s: Settings, path: string): void {
   const doc = {
     version: VERSION,
-    linear: { teamKey: s.linearTeamKey, pollSeconds: s.pollSeconds, hiddenStateTypes: s.hiddenStateTypes },
+    linear: { teamKey: s.linearTeamKey, pollSeconds: s.pollSeconds, hiddenStateTypes: s.hiddenStateTypes, columnOrder: s.columnOrder },
     repo: { path: s.repoPath, baseBranch: s.baseBranch },
     worktrees: { mode: s.worktreeMode, path: s.worktreePath },
     runs: { maxConcurrent: s.maxConcurrent },
@@ -69,10 +69,12 @@ export function readImportGroups(path: string, current: Settings): ImportGroupDa
     if (Array.isArray(raw.linear?.hiddenStateTypes)) {
       u.hiddenStateTypes = raw.linear.hiddenStateTypes.map(String).filter((t: string) => STATE_TYPES.has(t))
     }
+    if (Array.isArray(raw.linear?.columnOrder)) u.columnOrder = raw.linear.columnOrder.map(String).filter(Boolean)
     const bits = [
       u.linearTeamKey ? `team ${u.linearTeamKey}` : '',
       u.pollSeconds ? `checks every ${u.pollSeconds}s` : '',
-      u.hiddenStateTypes ? `hides ${u.hiddenStateTypes.join(', ') || 'nothing'}` : ''
+      u.hiddenStateTypes ? `hides ${u.hiddenStateTypes.join(', ') || 'nothing'}` : '',
+      u.columnOrder?.length ? 'custom column order' : ''
     ]
     add('linear', 'Linear', u, bits.filter(Boolean).join(' · '))
   }

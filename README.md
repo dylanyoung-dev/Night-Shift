@@ -1,3 +1,5 @@
+<img src="build/icon.svg" width="96" height="96" alt="Night Shift logo: a crescent moon holding a terminal prompt">
+
 # Night-Shift
 Project Night Shift a tool to help me run/manage my Agentic Software Factory.
 
@@ -52,16 +54,18 @@ The filter bar above the board narrows what's shown by ID or title, assignee, la
 
 ## Automations
 
-The **Automations** page schedules agent runs. Each automation picks tickets from a project and one or more Linear states, and runs each state's set of steps (states without a set can't be picked). Two kinds:
+The **Automations** page schedules agent runs. Each automation picks tickets from a project and one or more Linear states, and runs the action set up for each state (states without an action can't be picked). Two kinds:
 
 - **Watch for tickets**: checks on every Linear sync and picks tickets up as they arrive, at any time or within set days and hours. Per ticket: once each time it arrives in the state, or any number of times with a cooldown. A limit on how many of its runs go at once keeps it from queuing a whole column.
 - **On a schedule**: fires every N minutes within set days and hours, starting up to N tickets each time (highest priority first). It can stop after a set number of runs and switch itself off. With **Only run when the state has tickets**, an empty state doesn't use up a run; it checks again in a minute.
 
 New automations start switched off. **Run now** checks straight away, ignoring the schedule and hours. All runs share the max-local-runs limit in Settings, and Run history shows which automation started each run.
 
-## Steps
+## Actions
 
-Steps are grouped into **sets**. A set runs for tickets in any of its Linear states and shows as a button on their cards (its **button label**, e.g. Review and Review fix on In Review). A state can have several sets; two sets on the same state need different labels. Automations on a state with several sets pick which one to run. Create and edit sets on the **Steps per state** page; saving writes `.nightshift/steps.yml` in the repo agents work in (not this repo), so changes go through PRs. Without that file the built-in defaults are used. Older files with one block per state still load and are converted on the next save. Sets only say what runs; runs start from a card's Run steps button or from an automation. See `.nightshift/steps.example.yml` for every option.
+An **action** is a named list of steps (scripts, Claude Code, Linear moves). It is available on tickets in any of its Linear states and shows in their card's **Actions ▾** menu under its **button label** (e.g. Review and Review fix on In Review). A state can have several actions; two actions on the same state need different labels. Automations on a state with several actions pick which one to run. Create, duplicate and edit actions on the **Actions** page; saving writes `.nightshift/steps.yml` in the repo agents work in (not this repo), so changes go through PRs. Without that file the built-in defaults are used. Older files with one block per state still load and are converted on the next save. Actions only say what runs; runs start from a card's Actions menu or from an automation. See `.nightshift/steps.example.yml` for every option.
+
+Each action can also say what happens **if a run fails**: label the ticket in Linear (default "Agent failed"), comment with the failed step and the end of the log, and send it back to a state such as Ready to Build so an automation there runs it again. After a set number of failures in a row it stays put, and a successful run removes the label.
 
 Each run:
 

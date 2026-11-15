@@ -41,19 +41,27 @@
     },
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "resources/**"
     ],
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Night Shift"
-    }
+      "shortcutName": "Night Shift",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
+    },
+    "icon": "build/icon.png",
+    "asarUnpack": [
+      "resources/**"
+    ]
   }
 }

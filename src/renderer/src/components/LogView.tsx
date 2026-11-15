@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { isActiveRun, type LinearIssue, type Run } from '../../../shared/types'
+import { isActiveRun, type LinearIssue, type Run, type StepChoice } from '../../../shared/types'
 import Composer from './Composer'
+import LogText from './LogText'
 import { duration, runColor, runLabel, stepColor, stripAnsi } from '../util'
 
 interface Props {
@@ -9,12 +10,14 @@ interface Props {
   onClose(): void
   onStop(runId: string): void
   onOpenLinear(url: string): void
+  actions: StepChoice[] // the ticket's actions (sets of steps for its current state)
+  onAction(setName: string): void
 }
 
 const MAX_CHARS = 8_000_000 // keep the view responsive on runaway output
 
 // Larger live log, shown in the main area next to the sidebar: loads the whole file, then appends output as it streams in.
-export default function LogView({ run, issue, onClose, onStop, onOpenLinear }: Props): JSX.Element {
+export default function LogView({ run, issue, onClose, onStop, onOpenLinear, actions, onAction }: Props): JSX.Element {
   const [text, setText] = useState<string | null>(null)
   const [follow, setFollow] = useState(true)
   const [wrap, setWrap] = useState(true)
@@ -41,14 +44,32 @@ export default function LogView({ run, issue, onClose, onStop, onOpenLinear }: P
     }
   }, [run.id])
 
+  // The parent re-renders every second (run timers), handing over a new onClose each time. Keep the
+  // latest in a ref so focus and the Esc handler are set up once per run, not on every render,
+  // which used to pull focus out of the reply box.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  // Focus Back when a log opens, unless the person is already typing somewhere.
   useEffect(() => {
-    closeRef.current?.focus()
+    const el = document.activeElement
+    if (!el || el === document.body) closeRef.current?.focus()
+  }, [run.id])
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape') return
+      // Esc in the reply box clears focus instead of leaving the page mid-sentence.
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) {
+        t.blur()
+        return
+      }
+      onCloseRef.current()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [])
 
   // Stick to the bottom while following.
   useLayoutEffect(() => {
@@ -61,6 +82,22 @@ export default function LogView({ run, issue, onClose, onStop, onOpenLinear }: P
     if (!el) return
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
     if (atBottom !== follow) setFollow(atBottom)
+  }
+
+  const [copied, setCopied] = useState<string | null>(null)
+  const copyTimer = useRef<number>()
+  useEffect(() => () => window.clearTimeout(copyTimer.current), [])
+
+  async function copyLog(): Promise<void> {
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied('Copied')
+    } catch {
+      setCopied('Copy failed')
+    }
+    window.clearTimeout(copyTimer.current)
+    copyTimer.current = window.setTimeout(() => setCopied(null), 1500)
   }
 
   const active = isActiveRun(run.status)
@@ -94,6 +131,24 @@ export default function LogView({ run, issue, onClose, onStop, onOpenLinear }: P
         </div>
       </header>
 
+      {issue && actions.length > 0 && (
+        <div className="logview-actions" role="group" aria-label={`Actions for ${issue.identifier}`}>
+          <span className="listlabel">Actions</span>
+          {active ? (
+            <span className="note">Available when this run finishes.</span>
+          ) : (
+            <>
+              {actions.map((a, i) => (
+                <button key={a.name} className={`btn small${i === 0 ? ' primary' : ''}`} type="button" title={`Run "${a.name}" for ${issue.identifier}`} onClick={() => onAction(a.name)}>
+                  {a.label}
+                </button>
+              ))}
+              <span className="note">for {issue.identifier} in {issue.stateName}</span>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="logview-steps" aria-label="Steps">
         {run.steps.map((s, i) => (
           <span key={i} className={`logstep ${s.status}${i === run.currentStep && active ? ' current' : ''}`} title={s.command ?? s.name}>
@@ -106,7 +161,7 @@ export default function LogView({ run, issue, onClose, onStop, onOpenLinear }: P
 
       <div className="logview-body">
         <pre ref={logRef} className={`logview-log${wrap ? ' wrap' : ''}`} onScroll={onScroll} tabIndex={0} aria-live="off">
-          {text === null ? 'Loading log…' : text || 'No output yet.'}
+          {text === null ? 'Loading log…' : text ? <LogText text={text} /> : 'No output yet.'}
         </pre>
         <div className="logview-composer">
           <Composer run={run} />
@@ -120,6 +175,9 @@ export default function LogView({ run, issue, onClose, onStop, onOpenLinear }: P
             <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} />
             Wrap lines
           </label>
+          <button className="btn small" type="button" onClick={() => void copyLog()} disabled={!text} title="Copy the whole log to the clipboard">
+            {copied ?? 'Copy log'}
+          </button>
           {!follow && (
             <button className="btn small primary" type="button" onClick={() => setFollow(true)}>
               Jump to latest

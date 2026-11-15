@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="32" height="32">
+  <title>Night Shift</title>
+  <defs>
+    <mask id="cut"><rect width="200" height="200" fill="#fff"/><circle cx="124" cy="80" r="58" fill="#000"/></mask>
+  </defs>
+  <rect width="200" height="200" rx="40" fill="#141821"/>
+  <circle cx="96" cy="104" r="66" fill="#e3b341" mask="url(#cut)"/>
+  <path d="M106 76 L126 94 L106 112" stroke="#8fb0ff" stroke-width="16" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="134" y="100" width="28" height="14" rx="4" fill="#8fb0ff"/>
+</svg>

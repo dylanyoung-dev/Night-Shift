@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { DEFAULT_CLAUDE_COMMAND, setLabel, type LinearState, type Settings, type StepDef, type StepSet, type StepsFile, type WorktreeMode } from '../../../shared/types'
+import { DEFAULT_CLAUDE_COMMAND, DEFAULT_FAILURE_LABEL, DEFAULT_FAILURE_RETRIES, setLabel, type LinearState, type OnFailure, type Settings, type StepDef, type StepSet, type StepsFile, type WorktreeMode } from '../../../shared/types'
 import { groupSteps } from '../util'
 import { StatusIcon } from './LinearIcons'
 
@@ -96,6 +96,14 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
     change((set) => Object.assign(set.steps[i], patch))
   }
 
+  function changeFailure(patch: Partial<OnFailure>): void {
+    change((set) => {
+      const next: OnFailure = { ...set.onFailure, ...patch }
+      for (const k of Object.keys(next) as (keyof OnFailure)[]) if (next[k] === undefined) delete next[k]
+      set.onFailure = Object.keys(next).length ? next : undefined
+    })
+  }
+
   function moveStep(i: number, by: number): void {
     change((set) => {
       const j = i + by
@@ -105,11 +113,26 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
   }
 
   function addSet(): void {
-    const base = 'New steps'
+    const base = 'New action'
     let name = base
     for (let n = 2; sets.some((s) => s.name.toLowerCase() === name.toLowerCase()); n++) name = `${base} ${n}`
     setSets((prev) => [...copy(prev), { name, states: [], steps: [NEW_STEP.claude()] }])
     setSelected(sets.length)
+    setDirty(true)
+    setSaved(false)
+  }
+
+  // A copy of the selected set, placed right after it. Same states and steps; the name and the
+  // button label get "copy" so the two don't clash on the same states.
+  function duplicateSet(): void {
+    const src = sets[selected]
+    if (!src) return
+    const taken = (n: string): boolean => sets.some((s) => s.name.toLowerCase() === n.toLowerCase())
+    let name = `${src.name} copy`
+    for (let n = 2; taken(name); n++) name = `${src.name} copy ${n}`
+    const dup: StepSet = { ...copy([src])[0], name, label: `${setLabel(src)} (copy)` }
+    setSets((prev) => [...copy(prev.slice(0, selected + 1)), dup, ...copy(prev.slice(selected + 1))])
+    setSelected(selected + 1)
     setDirty(true)
     setSaved(false)
   }
@@ -148,7 +171,7 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
   return (
     <>
       <div className="statelist">
-        <div className="listlabel">Sets of steps</div>
+        <div className="listlabel">Actions</div>
         {sets.map((s, i) => (
           <button key={i} type="button" className={`state${i === selected ? ' active' : ''}`} onClick={() => setSelected(i)}>
             {s.name || 'Untitled'}
@@ -158,13 +181,13 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
           </button>
         ))}
         <button className="btn" type="button" style={{ margin: '10px 12px 0' }} onClick={addSet}>
-          New set of steps
+          New action
         </button>
       </div>
 
       <div className="page steps-editor">
         <div className="header">
-          <h1>{current?.name || 'Steps'}</h1>
+          <h1>{current?.name || 'Actions'}</h1>
           {dirty && <span className="chip warn-chip">Unsaved changes</span>}
           {saved && !dirty && <span className="note">Saved</span>}
           <div className="right">
@@ -172,13 +195,13 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
               {dirty ? 'Discard changes' : 'Reload'}
             </button>
             <button className="btn primary" type="button" onClick={() => void save()} disabled={!dirty || saving || !settings?.repoPath}>
-              {saving ? 'Saving…' : 'Save steps'}
+              {saving ? 'Saving…' : 'Save actions'}
             </button>
           </div>
         </div>
         <div className="note">
           {!settings?.repoPath
-            ? 'Set the repo path in Settings to save steps.'
+            ? 'Set the repo path in Settings to save actions.'
             : file?.path
               ? `Saved to ${file.path}. Commit it so changes go through a PR.`
               : `Using built-in defaults. Saving creates ${settings.repoPath}\\.nightshift\\steps.yml.`}
@@ -187,26 +210,26 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
         {file?.problems?.length && !dirty ? <div className="banner inline">{file.problems.join(' ')}</div> : null}
         {error && <div className="banner inline">{error}</div>}
 
-        {!current && <div className="empty">No sets of steps. Create one to get started.</div>}
+        {!current && <div className="empty">No actions yet. Create one to get started.</div>}
 
         {current && (
           <>
-            <section className="set-config" aria-label="Set settings">
+            <section className="set-config" aria-label="Action settings">
               <label className="lbl">
                 Name
                 <input className="input" value={current.name} onChange={(e) => change((s) => (s.name = e.target.value))} />
               </label>
               <label className="lbl">
-                Button label (on the ticket&apos;s card)
+                Button label (in the ticket's Actions menu)
                 <input
                   className="input"
                   value={current.label ?? ''}
-                  placeholder={current.name || 'Run steps'}
+                  placeholder={current.name || 'Run'}
                   onChange={(e) => change((s) => (s.label = e.target.value || undefined))}
                 />
                 {labelClash && (
                   <span className="note warn">
-                    &quot;{labelClash.name}&quot; already shows a &quot;{setLabel(current)}&quot; button on the same state. Pick a different label.
+                    &quot;{labelClash.name}&quot; already shows a &quot;{setLabel(current)}&quot; action on the same state. Pick a different label.
                   </span>
                 )}
               </label>
@@ -245,8 +268,8 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
               )}
             </section>
 
-            <div className="grouplabel steps">Runs for tickets in</div>
-            <div className="state-picks" role="group" aria-label="Linear states for this set">
+            <div className="grouplabel steps">Available on tickets in</div>
+            <div className="state-picks" role="group" aria-label="Linear states for this action">
               {states.map((st) => {
                 const on = current.states.some((n) => n.toLowerCase() === st.name.toLowerCase())
                 const also = others.get(st.name.toLowerCase()) ?? []
@@ -256,7 +279,7 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
                     type="button"
                     className={`state-pick${on ? ' on' : ''}`}
                     aria-pressed={on}
-                    title={also.length ? `Also has: ${also.map((s) => `${s.name} ("${setLabel(s)}" button)`).join(', ')}` : undefined}
+                    title={also.length ? `Other actions here: ${also.map((s) => (setLabel(s) === s.name ? s.name : `${s.name} ("${setLabel(s)}")`)).join(', ')}` : undefined}
                     onClick={() =>
                       change((s) => {
                         s.states = on ? s.states.filter((n) => n.toLowerCase() !== st.name.toLowerCase()) : [...s.states, st.name]
@@ -369,6 +392,55 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
             ))}
             {!current.steps.length && <div className="empty">No steps yet.</div>}
 
+            <div className="grouplabel steps">If a run fails</div>
+            <section className="set-config" aria-label="If a run fails">
+              <label className="lbl">
+                Send the ticket back to
+                <select
+                  className="input"
+                  value={current.onFailure?.moveTo ?? ''}
+                  onChange={(e) => changeFailure({ moveTo: e.target.value || undefined })}
+                >
+                  <option value="">Leave it where it is</option>
+                  {states.map((st) => (
+                    <option key={st.id} value={st.name}>
+                      {st.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="lbl">
+                Label it in Linear
+                <input
+                  className="input"
+                  value={current.onFailure?.label ?? ''}
+                  placeholder={DEFAULT_FAILURE_LABEL}
+                  onChange={(e) => changeFailure({ label: e.target.value || undefined })}
+                />
+              </label>
+              <label className="lbl">
+                Give up after this many failures in a row
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={(current.onFailure?.retries ?? DEFAULT_FAILURE_RETRIES) + 1}
+                  disabled={!current.onFailure?.moveTo}
+                  onChange={(e) => changeFailure({ retries: Math.max(0, Math.floor(Number(e.target.value) || 1) - 1) })}
+                />
+              </label>
+              <label className="toggle">
+                <input type="checkbox" checked={current.onFailure?.comment !== false} onChange={(e) => changeFailure({ comment: e.target.checked ? undefined : false })} />
+                Comment on the ticket with the failed step and the end of the log
+              </label>
+              <p className="note" style={{ gridColumn: '1 / -1', margin: 0 }}>
+                {current.onFailure?.moveTo
+                  ? `A failed run labels the ticket "${current.onFailure.label || DEFAULT_FAILURE_LABEL}" and moves it to ${current.onFailure.moveTo}, so an automation there runs it again. After ${(current.onFailure.retries ?? DEFAULT_FAILURE_RETRIES) + 1} failures in a row it stays put. A successful run removes the label. Stopping a run yourself does none of this.`
+                  : 'A failed run leaves the ticket where it is. Pick a state to send it back to, so an automation on that state gives it another run.'}
+              </p>
+            </section>
+
             <div className="add-steps">
               <button className="btn" type="button" onClick={() => change((s) => s.steps.push(NEW_STEP.script()))}>
                 Add script step
@@ -379,8 +451,11 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
               <button className="btn" type="button" onClick={() => change((s) => s.steps.push(NEW_STEP.linear()))}>
                 Add Linear move
               </button>
-              <button className={`btn danger${confirmDelete ? ' confirm' : ''}`} type="button" style={{ marginLeft: 'auto' }} onClick={deleteSet} onBlur={() => setConfirmDelete(false)}>
-                {confirmDelete ? 'Click again to delete this set' : 'Delete set'}
+              <button className="btn" type="button" style={{ marginLeft: 'auto' }} title="Make a copy of this action to change" onClick={duplicateSet}>
+                Duplicate action
+              </button>
+              <button className={`btn danger${confirmDelete ? ' confirm' : ''}`} type="button" onClick={deleteSet} onBlur={() => setConfirmDelete(false)}>
+                {confirmDelete ? 'Click again to delete this action' : 'Delete action'}
               </button>
             </div>
           </>

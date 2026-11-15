@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { BoardData, IssueUpdate, LinearIssue } from '../../../shared/types'
+import type { BoardData, IssueUpdate, LinearIssue, StepChoice } from '../../../shared/types'
 import { Avatar, EstimateIcon, PRIORITY_LABEL, PriorityIcon, StatusIcon } from './LinearIcons'
 
-export type MenuMode = 'actions' | 'status' | 'priority' | 'assignee' | 'labels' | 'estimate'
+// 'actions' is the right-click menu; 'run' lists the ticket's actions (sets of steps) to start.
+export type MenuMode = 'actions' | 'run' | 'status' | 'priority' | 'assignee' | 'labels' | 'estimate'
 
 interface Props {
   issue: LinearIssue
@@ -12,6 +13,9 @@ interface Props {
   onMode(mode: MenuMode): void
   onUpdate(update: IssueUpdate): void
   onClose(): void
+  runActions: StepChoice[] // the ticket's actions
+  runBlocked?: string // why actions can't start now (e.g. a run is going)
+  onRun(setName: string): void
 }
 
 interface Option {
@@ -25,6 +29,7 @@ interface Option {
 const PRIORITY_ORDER = [0, 1, 2, 3, 4]
 const TITLES: Record<MenuMode, string> = {
   actions: 'Change',
+  run: 'Run an action',
   status: 'Change status',
   priority: 'Set priority',
   assignee: 'Assign to',
@@ -32,8 +37,16 @@ const TITLES: Record<MenuMode, string> = {
   estimate: 'Set estimate'
 }
 
+function PlayIcon(): JSX.Element {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+      <path d="M3.5 2.2 L9.8 6 L3.5 9.8 Z" fill="currentColor" />
+    </svg>
+  )
+}
+
 // A Linear-style command menu for one card. Every choice is sent to Linear by the caller.
-export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, onClose }: Props): JSX.Element {
+export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, onClose, runActions, runBlocked, onRun }: Props): JSX.Element {
   const [filter, setFilter] = useState('')
   const [active, setActive] = useState(0)
   const [pos, setPos] = useState(at)
@@ -49,8 +62,21 @@ export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, on
       onClose()
     }
     switch (mode) {
+      case 'run':
+        return runBlocked
+          ? []
+          : runActions.map((a) => ({
+              key: a.name,
+              label: a.label,
+              icon: <PlayIcon />,
+              run: () => {
+                onRun(a.name)
+                onClose()
+              }
+            }))
       case 'actions':
         return [
+          ...(runActions.length ? [{ key: 'run', label: 'Run an action', icon: <PlayIcon />, run: () => onMode('run') }] : []),
           { key: 'status', label: 'Status', icon: <StatusIcon state={states.find((s) => s.id === issue.stateId) ?? states[0]} />, run: () => onMode('status') },
           { key: 'priority', label: 'Priority', icon: <PriorityIcon priority={issue.priority} />, run: () => onMode('priority') },
           { key: 'assignee', label: 'Assignee', icon: <Avatar person={issue.assignee} />, run: () => onMode('assignee') },
@@ -109,7 +135,7 @@ export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, on
           }))
         ]
     }
-  }, [mode, issue, states, team, labelIds, onMode, onUpdate, onClose])
+  }, [mode, issue, states, team, labelIds, onMode, onUpdate, onClose, runActions, runBlocked, onRun])
 
   const shown = filter ? options.filter((o) => o.label.toLowerCase().includes(filter.toLowerCase())) : options
 
@@ -165,7 +191,8 @@ export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, on
     }
   }, [onClose, shown, active, mode, filter])
 
-  const searchable = mode !== 'actions'
+  // Short lists don't need a filter box.
+  const searchable = mode !== 'actions' && !(mode === 'run' && runActions.length <= 6)
 
   return (
     <div
@@ -213,7 +240,9 @@ export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, on
             </button>
           </li>
         ))}
-        {!shown.length && <li className="issue-menu-empty">No matches</li>}
+        {!shown.length && (
+          <li className="issue-menu-empty">{mode === 'run' ? runBlocked ?? `No actions for ${issue.stateName}. Add one on the Actions page.` : 'No matches'}</li>
+        )}
       </ul>
       {mode === 'labels' && <div className="issue-menu-foot">Changes save to Linear as you click</div>}
     </div>

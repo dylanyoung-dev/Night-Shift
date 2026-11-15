@@ -247,3 +247,56 @@ export async function updateIssue(apiKey: string, issueId: string, input: IssueU
 export async function moveIssue(apiKey: string, issueId: string, stateId: string): Promise<void> {
   await updateIssue(apiKey, issueId, { stateId })
 }
+
+// The issue's labels and team, and a label of that name the team can use (team or workspace), if any.
+async function issueAndLabel(apiKey: string, issueId: string, name: string): Promise<{ teamId: string; labelIds: string[]; label: string | null }> {
+  const data = await gql<{
+    issue: { team: { id: string }; labels: { nodes: { id: string; name: string }[] } }
+    issueLabels: { nodes: { id: string; team: { id: string } | null }[] }
+  }>(
+    apiKey,
+    `query FailLabel($id: String!, $name: String!) {
+      issue(id: $id) { team { id } labels(first: 50) { nodes { id name } } }
+      issueLabels(first: 20, filter: { name: { eqIgnoreCase: $name } }) { nodes { id team { id } } }
+    }`,
+    { id: issueId, name }
+  )
+  const teamId = data.issue.team.id
+  const own = data.issue.labels.nodes.find((l) => l.name.toLowerCase() === name.toLowerCase())
+  const usable = data.issueLabels.nodes.find((l) => l.team?.id === teamId) ?? data.issueLabels.nodes.find((l) => !l.team)
+  return { teamId, labelIds: data.issue.labels.nodes.map((l) => l.id), label: own?.id ?? usable?.id ?? null }
+}
+
+// Adds a label by name, creating it on the issue's team if it doesn't exist yet.
+export async function addLabelByName(apiKey: string, issueId: string, name: string): Promise<void> {
+  const { teamId, labelIds, label } = await issueAndLabel(apiKey, issueId, name)
+  let id = label
+  if (id && labelIds.includes(id)) return
+  if (!id) {
+    const made = await gql<{ issueLabelCreate: { issueLabel: { id: string } } }>(
+      apiKey,
+      `mutation MakeLabel($input: IssueLabelCreateInput!) { issueLabelCreate(input: $input) { issueLabel { id } } }`,
+      { input: { name, teamId, color: '#eb5757' } }
+    )
+    id = made.issueLabelCreate.issueLabel.id
+  }
+  await updateIssue(apiKey, issueId, { labelIds: [...labelIds, id] })
+}
+
+// Removes a label by name; false when the issue didn't have it.
+export async function removeLabelByName(apiKey: string, issueId: string, name: string): Promise<boolean> {
+  const data = await gql<{ issue: { labels: { nodes: { id: string; name: string }[] } } }>(
+    apiKey,
+    `query Labels($id: String!) { issue(id: $id) { labels(first: 50) { nodes { id name } } } }`,
+    { id: issueId }
+  )
+  const all = data.issue.labels.nodes
+  const keep = all.filter((l) => l.name.toLowerCase() !== name.toLowerCase())
+  if (keep.length === all.length) return false
+  await updateIssue(apiKey, issueId, { labelIds: keep.map((l) => l.id) })
+  return true
+}
+
+export async function addComment(apiKey: string, issueId: string, body: string): Promise<void> {
+  await gql(apiKey, `mutation Comment($input: CommentCreateInput!) { commentCreate(input: $input) { success } }`, { input: { issueId, body } })
+}

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { isActiveRun, type BoardData, type IssueUpdate, type LinearIssue, type LinearState, type Run, type StepChoice } from '../../../shared/types'
+import { DEFAULT_FAILURE_LABEL, isActiveRun, type BoardData, type IssueUpdate, type LinearIssue, type LinearState, type Run, type StepChoice } from '../../../shared/types'
 import IssueMenu, { type MenuMode } from './IssueMenu'
 import { duration, runColor, runLabel } from '../util'
 import {
@@ -17,6 +17,9 @@ import {
 interface Props {
   board: BoardData
   latestRun: Map<string, Run>
+  runsByIssue: Map<string, Run[]> // every run per ticket, newest first
+  onReorderColumns(stateNames: string[]): void // a column header was dragged to a new place
+  onOpenLog(runId: string): void
   selectedIssue: string | null
   onSelect(issueId: string): void
   onStart(issueId: string, setName: string): void
@@ -25,7 +28,18 @@ interface Props {
 }
 
 const DRAG_TYPE = 'application/x-nightshift-issue'
+const COL_DRAG_TYPE = 'application/x-nightshift-column'
 const PER_COLUMN = 60
+const OLDER_SHOWN = 4 // earlier runs listed under the latest one on a card
+
+// "5m ago", "3h ago", "2d ago"
+function ago(t: number): string {
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000))
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m}m ago`
+  const h = Math.round(m / 60)
+  return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`
+}
 
 function createdLabel(iso: string): string {
   const d = new Date(iso)
@@ -50,26 +64,32 @@ function Card({
   state,
   progress,
   run,
+  older,
   selected,
   sets,
   canEstimate,
   onSelect,
   onStart,
-  onMenu
+  onMenu,
+  onOpenLog
 }: {
   issue: LinearIssue
   state: LinearState
   progress: number
   run?: Run
+  older: Run[] // earlier runs on this ticket, newest first
   selected: boolean
   sets: StepChoice[]
   canEstimate: boolean
   onSelect(): void
   onStart(setName: string): void
   onMenu(mode: MenuMode, at: { x: number; y: number }): void
+  onOpenLog(runId: string): void
 }): JSX.Element {
   const active = run && isActiveRun(run.status)
   const waiting = run?.status === 'waiting'
+  // Red: the last run failed, or Linear still has the failure label on it (e.g. from another install).
+  const failed = run?.status === 'failed' || issue.labels.some((l) => l.name.toLowerCase() === DEFAULT_FAILURE_LABEL.toLowerCase())
   const step = run && run.currentStep >= 0 ? run.steps[run.currentStep] : undefined
   const stop = (fn: () => void) => (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -84,7 +104,7 @@ function Card({
 
   return (
     <article
-      className={`card${selected ? ' selected' : ''}${waiting ? ' needs-you' : ''}`}
+      className={`card${selected ? ' selected' : ''}${waiting ? ' needs-you' : active ? ' running' : failed ? ' failed' : ''}`}
       tabIndex={0}
       aria-label={`${issue.identifier} ${issue.title}`}
       draggable
@@ -196,25 +216,60 @@ function Card({
         </div>
       )}
 
+      {older.length > 0 && (
+        <ul className="run-stack" aria-label={`Earlier runs on ${issue.identifier}`}>
+          {older.slice(0, OLDER_SHOWN).map((r) => (
+            <li key={r.id}>
+              <button type="button" className="run-row" title={`Open the log of ${r.stepsName} (${runLabel[r.status]})`} onClick={stop(() => onOpenLog(r.id))}>
+                <span className="dot" style={{ background: runColor[r.status] }} />
+                <span className="what">
+                  {runLabel[r.status]} · {r.stepsName}
+                </span>
+                <span className="when">
+                  {r.startedAt ? `${duration(r.startedAt, r.endedAt)} · ` : ''}
+                  {ago(r.endedAt ?? r.startedAt ?? r.createdAt)}
+                </span>
+              </button>
+            </li>
+          ))}
+          {older.length > OLDER_SHOWN && <li className="run-more">+{older.length - OLDER_SHOWN} earlier on Run history</li>}
+        </ul>
+      )}
+
       <div className="card-foot">
         <span className="created">{createdLabel(issue.createdAt)}</span>
         {!active && sets.length > 0 && (
-          <span className="card-runs">
-            {sets.map((s) => (
-              <button key={s.name} className="btn small card-run" type="button" title={`Run "${s.name}" for ${issue.identifier}`} onClick={stop(() => onStart(s.name))}>
-                {s.label}
-              </button>
-            ))}
-          </span>
+          <button
+            className="btn small card-run"
+            type="button"
+            aria-haspopup="menu"
+            title={`Actions for ${issue.identifier}: ${sets.map((s) => s.label).join(', ')}`}
+            onClick={menu('run')}
+          >
+            Actions ▾
+          </button>
         )}
       </div>
     </article>
   )
 }
 
-export default function Board({ board, latestRun, selectedIssue, onSelect, onStart, onUpdate, setsFor }: Props): JSX.Element {
+export default function Board({ board, latestRun, runsByIssue, onReorderColumns, onOpenLog, selectedIssue, onSelect, onStart, onUpdate, setsFor }: Props): JSX.Element {
   const [menu, setMenu] = useState<{ issueId: string; mode: MenuMode; at: { x: number; y: number } } | null>(null)
   const [dropState, setDropState] = useState<string | null>(null)
+  // Column being dragged by its header, and where it would land.
+  const [colDrop, setColDrop] = useState<{ id: string; side: 'before' | 'after' } | null>(null)
+
+  function moveColumn(name: string, targetId: string, side: 'before' | 'after'): void {
+    const names = board.states.map((s) => s.name)
+    const from = names.indexOf(name)
+    const target = board.states.find((s) => s.id === targetId)
+    if (from < 0 || !target || target.name === name) return
+    names.splice(from, 1)
+    const at = names.indexOf(target.name) + (side === 'after' ? 1 : 0)
+    names.splice(at, 0, name)
+    if (names.join('|') !== board.states.map((s) => s.name).join('|')) onReorderColumns(names)
+  }
   const menuIssue = menu ? board.issues.find((i) => i.id === menu.issueId) : undefined
   const progress = useStartedProgress(board.states)
 
@@ -245,26 +300,52 @@ export default function Board({ board, latestRun, selectedIssue, onSelect, onSta
           return (
             <section
               key={state.id}
-              className={`col${dropState === state.id ? ' drop' : ''}`}
+              className={`col${dropState === state.id ? ' drop' : ''}${colDrop?.id === state.id ? ` col-drop-${colDrop.side}` : ''}`}
               aria-label={state.name}
               onDragOver={(e) => {
+                if (e.dataTransfer.types.includes(COL_DRAG_TYPE)) {
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  const r = e.currentTarget.getBoundingClientRect()
+                  const side = e.clientX < r.left + r.width / 2 ? 'before' : 'after'
+                  if (colDrop?.id !== state.id || colDrop.side !== side) setColDrop({ id: state.id, side })
+                  return
+                }
                 if (!e.dataTransfer.types.includes(DRAG_TYPE)) return
                 e.preventDefault()
                 e.dataTransfer.dropEffect = 'move'
                 if (dropState !== state.id) setDropState(state.id)
               }}
               onDragLeave={(e) => {
-                if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropState((s) => (s === state.id ? null : s))
+                if (e.currentTarget.contains(e.relatedTarget as Node)) return
+                setDropState((s) => (s === state.id ? null : s))
+                setColDrop((c) => (c?.id === state.id ? null : c))
               }}
               onDrop={(e) => {
                 e.preventDefault()
                 setDropState(null)
+                const col = e.dataTransfer.getData(COL_DRAG_TYPE)
+                if (col) {
+                  const side = colDrop?.id === state.id ? colDrop.side : 'before'
+                  setColDrop(null)
+                  moveColumn(col, state.id, side)
+                  return
+                }
                 const id = e.dataTransfer.getData(DRAG_TYPE)
                 const moved = board.issues.find((i) => i.id === id)
                 if (moved && moved.stateId !== state.id) onUpdate(id, { stateId: state.id })
               }}
             >
-              <div className="colhead">
+              <div
+                className="colhead"
+                draggable
+                title="Drag to move this column"
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(COL_DRAG_TYPE, state.name)
+                  e.dataTransfer.effectAllowed = 'move'
+                }}
+                onDragEnd={() => setColDrop(null)}
+              >
                 <StatusIcon state={state} progress={progress.get(state.id)} />
                 <span className="name">{state.name}</span>
                 <span className="count">{issues.length}</span>
@@ -275,8 +356,8 @@ export default function Board({ board, latestRun, selectedIssue, onSelect, onSta
                   </span>
                 )}
                 {sets.length > 0 && (
-                  <span className="steps-tag" title={`Steps: ${sets.map((s) => s.label).join(', ')}`}>
-                    {sets.length === 1 ? 'Steps' : `${sets.length} steps`}
+                  <span className="steps-tag" title={`Actions: ${sets.map((s) => s.label).join(', ')}`}>
+                    {sets.length === 1 ? '1 action' : `${sets.length} actions`}
                   </span>
                 )}
               </div>
@@ -288,12 +369,14 @@ export default function Board({ board, latestRun, selectedIssue, onSelect, onSta
                     state={state}
                     progress={progress.get(state.id) ?? 0.5}
                     run={latestRun.get(issue.id)}
+                    older={runsByIssue.get(issue.id)?.slice(1) ?? []}
                     selected={selectedIssue === issue.id}
                     sets={sets}
                     canEstimate={Boolean(board.team?.estimates.length)}
                     onSelect={() => onSelect(issue.id)}
                     onStart={(setName) => onStart(issue.id, setName)}
                     onMenu={(mode, at) => setMenu({ issueId: issue.id, mode, at })}
+                    onOpenLog={onOpenLog}
                   />
                 ))}
                 {issues.length > PER_COLUMN && <div className="more">+{issues.length - PER_COLUMN} more in Linear</div>}
@@ -311,6 +394,12 @@ export default function Board({ board, latestRun, selectedIssue, onSelect, onSta
           onMode={(mode) => setMenu((m) => (m ? { ...m, mode } : m))}
           onUpdate={(update) => onUpdate(menuIssue.id, update)}
           onClose={() => setMenu(null)}
+          runActions={setsFor(menuIssue.stateName)}
+          runBlocked={(() => {
+            const r = latestRun.get(menuIssue.id)
+            return r && isActiveRun(r.status) ? `${menuIssue.identifier} already has a run going.` : undefined
+          })()}
+          onRun={(setName) => onStart(menuIssue.id, setName)}
         />
       )}
     </div>

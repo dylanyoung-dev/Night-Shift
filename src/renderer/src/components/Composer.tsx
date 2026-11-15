@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Run } from '../../../shared/types'
+import { isActiveRun, resumableStep, type Run } from '../../../shared/types'
 
 interface Props {
   run: Run
@@ -7,6 +7,7 @@ interface Props {
 }
 
 // Talk to a running Claude step: send a message, or finish the step so the run carries on.
+// After a run ends, a reply picks its Claude session back up (e.g. answering a planner's questions).
 export default function Composer({ run, compact }: Props): JSX.Element | null {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
@@ -19,13 +20,15 @@ export default function Composer({ run, compact }: Props): JSX.Element | null {
     if (waiting) ref.current?.focus()
   }, [waiting])
 
-  if (!run.interactive && !waiting) return null
+  // Ended, with a Claude session to resume (and a preload new enough to do it).
+  const ended = !isActiveRun(run.status) && resumableStep(run) >= 0 && Boolean(window.nightShift.continueRun)
+  if (!run.interactive && !waiting && !ended) return null
 
   async function send(): Promise<void> {
     if (!text.trim() || sending) return
     setSending(true)
     setError(null)
-    const res = await window.nightShift.replyToRun(run.id, text)
+    const res = ended && window.nightShift.continueRun ? await window.nightShift.continueRun(run.id, text) : await window.nightShift.replyToRun(run.id, text)
     setSending(false)
     if ('error' in res) setError(res.error)
     else setText('')
@@ -38,7 +41,7 @@ export default function Composer({ run, compact }: Props): JSX.Element | null {
   }
 
   return (
-    <div className={`composer${waiting ? ' waiting' : ''}${compact ? ' compact' : ''}`}>
+    <div className={`composer${waiting ? ' waiting' : ''}${ended ? ' ended' : ''}${compact ? ' compact' : ''}`}>
       {waiting && run.waiting && (
         <div className="composer-alert" role="status">
           <strong>Needs you</strong>
@@ -53,7 +56,13 @@ export default function Composer({ run, compact }: Props): JSX.Element | null {
         ref={ref}
         className="composer-input"
         rows={compact ? 2 : 3}
-        placeholder={waiting ? 'Reply to Claude…' : "Message Claude. It reads this when it finishes what it's doing…"}
+        placeholder={
+          ended
+            ? 'Reply to pick this agent back up: "Go", or answers and feedback on its questions…'
+            : waiting
+              ? 'Reply to Claude…'
+              : "Message Claude. It reads this when it finishes what it's doing…"
+        }
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
@@ -66,11 +75,19 @@ export default function Composer({ run, compact }: Props): JSX.Element | null {
       />
       <div className="composer-actions">
         <span className="note">{error ?? 'Enter to send · Shift+Enter for a new line'}</span>
-        <button className="btn" type="button" title="End Claude's session and carry on with the next step" onClick={() => void finish()}>
-          Finish step
-        </button>
-        <button className="btn primary" type="button" disabled={!text.trim() || sending} onClick={() => void send()}>
-          Send
+        {!ended && (
+          <button className="btn" type="button" title="End Claude's session and carry on with the next step" onClick={() => void finish()}>
+            Finish step
+          </button>
+        )}
+        <button
+          className="btn primary"
+          type="button"
+          disabled={!text.trim() || sending}
+          title={ended ? 'Resume the Claude session with your reply. It runs as a new step on this run.' : undefined}
+          onClick={() => void send()}
+        >
+          {ended ? 'Send & continue' : 'Send'}
         </button>
       </div>
     </div>

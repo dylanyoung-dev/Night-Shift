@@ -1,6 +1,6 @@
 import type { LinearProject, NightShiftProject } from '../../../shared/types'
 
-export type View = 'board' | 'agents' | 'automations' | 'steps' | 'runs' | 'settings' | 'projects'
+export type View = 'board' | 'agents' | 'automations' | 'steps' | 'runs' | 'usage' | 'settings' | 'projects'
 
 interface Props {
   view: View
@@ -19,8 +19,9 @@ const items: { id: View; label: string }[] = [
   { id: 'board', label: 'Board' },
   { id: 'agents', label: 'Running agents' },
   { id: 'automations', label: 'Automations' },
-  { id: 'steps', label: 'Steps per state' },
+  { id: 'steps', label: 'Actions' },
   { id: 'runs', label: 'Run history' },
+  { id: 'usage', label: 'Usage' },
   { id: 'settings', label: 'Settings' }
 ]
 
@@ -48,7 +49,21 @@ export default function Sidebar({
   const colorOf = (p: NightShiftProject): string => linearProjects.find((lp) => lp.id === p.linearProjectIds[0])?.color ?? '#9ba1ad'
   return (
     <nav className="sidebar" aria-label="Main">
-      <div className="brand">Night Shift</div>
+      <div className="brand">
+        <svg viewBox="0 0 200 200" width="22" height="22" aria-hidden="true">
+          <defs>
+            <mask id="brand-cut">
+              <rect width="200" height="200" fill="#fff" />
+              <circle cx="124" cy="80" r="58" fill="#000" />
+            </mask>
+          </defs>
+          <rect width="200" height="200" rx="40" fill="#141821" />
+          <circle cx="96" cy="104" r="66" fill="#e3b341" mask="url(#brand-cut)" />
+          <path d="M106 76 L126 94 L106 112" stroke="#8fb0ff" strokeWidth="16" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          <rect x="134" y="100" width="28" height="14" rx="4" fill="#8fb0ff" />
+        </svg>
+        Night Shift
+      </div>
       {items.map((it) => (
         <button
           key={it.id}
