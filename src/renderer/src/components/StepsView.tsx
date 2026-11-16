@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { DEFAULT_CLAUDE_COMMAND, DEFAULT_FAILURE_LABEL, DEFAULT_FAILURE_RETRIES, setLabel, type LinearState, type OnFailure, type Settings, type StepDef, type StepSet, type StepsFile, type WorktreeMode } from '../../../shared/types'
+import { CLAUDE_RUN_FLAGS, DEFAULT_CLAUDE_COMMAND, DEFAULT_FAILURE_LABEL, DEFAULT_FAILURE_RETRIES, setLabel, type LinearState, type OnFailure, type Settings, type StepDef, type StepSet, type StepsFile, type WorktreeMode } from '../../../shared/types'
 import { groupSteps } from '../util'
 import { StatusIcon } from './LinearIcons'
 
@@ -31,6 +31,9 @@ function missingFlags(run: string): { flags: string; why: string }[] {
   }
   return out
 }
+
+// A global action has no ticket, so its Claude step runs a skill on the whole repo.
+const GLOBAL_CLAUDE_COMMAND = `claude -p "/audit" ${CLAUDE_RUN_FLAGS}`
 
 const typeLabel: Record<StepDef['type'], string> = { script: 'Script', claude: 'Claude', linear: 'Linear' }
 
@@ -112,11 +115,14 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
     })
   }
 
-  function addSet(): void {
-    const base = 'New action'
+  function addSet(global = false): void {
+    const base = global ? 'New global action' : 'New action'
     let name = base
     for (let n = 2; sets.some((s) => s.name.toLowerCase() === name.toLowerCase()); n++) name = `${base} ${n}`
-    setSets((prev) => [...copy(prev), { name, states: [], steps: [NEW_STEP.claude()] }])
+    const fresh: StepSet = global
+      ? { name, global: true, states: [], steps: [{ name: 'Claude', type: 'claude', run: GLOBAL_CLAUDE_COMMAND, onFail: 'stop' }] }
+      : { name, states: [], steps: [NEW_STEP.claude()] }
+    setSets((prev) => [...copy(prev), fresh])
     setSelected(sets.length)
     setDirty(true)
     setSaved(false)
@@ -174,14 +180,21 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
         <div className="listlabel">Actions</div>
         {sets.map((s, i) => (
           <button key={i} type="button" className={`state${i === selected ? ' active' : ''}`} onClick={() => setSelected(i)}>
-            {s.name || 'Untitled'}
+            <span>
+              {s.name || 'Untitled'}
+              {s.global && <span className="global-tag">Global</span>}
+            </span>
             <span className="sub">
-              &quot;{setLabel(s)}&quot; · {s.states.length ? s.states.join(', ') : 'No states yet'} · {s.steps.length} {s.steps.length === 1 ? 'step' : 'steps'}
+              &quot;{setLabel(s)}&quot; · {s.global ? 'Run menu and automations' : s.states.length ? s.states.join(', ') : 'No states yet'} · {s.steps.length}{' '}
+              {s.steps.length === 1 ? 'step' : 'steps'}
             </span>
           </button>
         ))}
-        <button className="btn" type="button" style={{ margin: '10px 12px 0' }} onClick={addSet}>
+        <button className="btn" type="button" style={{ margin: '10px 12px 0' }} onClick={() => addSet()}>
           New action
+        </button>
+        <button className="btn" type="button" style={{ margin: '6px 12px 0' }} title="An action not tied to a ticket, run from the base branch" onClick={() => addSet(true)}>
+          New global action
         </button>
       </div>
 
@@ -219,8 +232,31 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
                 Name
                 <input className="input" value={current.name} onChange={(e) => change((s) => (s.name = e.target.value))} />
               </label>
+              <label className="toggle" style={{ gridColumn: '1 / -1' }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(current.global)}
+                  onChange={(e) =>
+                    change((s) => {
+                      if (e.target.checked) {
+                        s.global = true
+                        s.states = []
+                        s.worktree = undefined
+                        s.onFailure = undefined
+                        s.steps = s.steps.filter((st) => st.type !== 'linear') // no ticket to move
+                      } else {
+                        delete s.global
+                      }
+                    })
+                  }
+                />
+                <span>
+                  <strong>Global action</strong>: not tied to a ticket or state. Runs from a fresh checkout of{' '}
+                  {settings?.baseBranch || 'the base branch'}, started from <em>Run action</em> at the top of the board or from an automation.
+                </span>
+              </label>
               <label className="lbl">
-                Button label (in the ticket's Actions menu)
+                {current.global ? 'Name in the Run action menu' : "Button label (in the ticket's Actions menu)"}
                 <input
                   className="input"
                   value={current.label ?? ''}
@@ -233,6 +269,7 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
                   </span>
                 )}
               </label>
+              {!current.global && (
               <label className="lbl">
                 Worktree
                 <select
@@ -250,7 +287,8 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
                   <option value="agent">Let the agent decide</option>
                 </select>
               </label>
-              {(wtMode === 'inherit' ? settings?.worktreeMode : wtMode) !== 'agent' && (
+              )}
+              {!current.global && (wtMode === 'inherit' ? settings?.worktreeMode : wtMode) !== 'agent' && (
                 <label className="lbl">
                   Worktree path (blank = Settings)
                   <input
@@ -268,6 +306,13 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
               )}
             </section>
 
+            {current.global ? (
+              <p className="note">
+                Each run checks out the latest {settings?.baseBranch || 'base branch'} into its own folder (replaced every run), and every step runs
+                there. <code>$WORKTREE</code> is that folder, <code>$BASE</code> the branch. There&apos;s no ticket, so <code>$TICKET</code> is empty.
+              </p>
+            ) : (
+            <>
             <div className="grouplabel steps">Available on tickets in</div>
             <div className="state-picks" role="group" aria-label="Linear states for this action">
               {states.map((st) => {
@@ -305,6 +350,8 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
               ))}
               {!states.length && <span className="note">Linear states load once your Linear key is set.</span>}
             </div>
+            </>
+            )}
 
             {groupSteps(current.steps).map((g) => (
               <section key={g.label}>
@@ -392,6 +439,8 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
             ))}
             {!current.steps.length && <div className="empty">No steps yet.</div>}
 
+            {!current.global && (
+            <>
             <div className="grouplabel steps">If a run fails</div>
             <section className="set-config" aria-label="If a run fails">
               <label className="lbl">
@@ -440,6 +489,8 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
                   : 'A failed run leaves the ticket where it is. Pick a state to send it back to, so an automation on that state gives it another run.'}
               </p>
             </section>
+            </>
+            )}
 
             <div className="add-steps">
               <button className="btn" type="button" onClick={() => change((s) => s.steps.push(NEW_STEP.script()))}>
@@ -448,9 +499,11 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
               <button className="btn" type="button" onClick={() => change((s) => s.steps.push(NEW_STEP.claude()))}>
                 Add Claude step
               </button>
-              <button className="btn" type="button" onClick={() => change((s) => s.steps.push(NEW_STEP.linear()))}>
-                Add Linear move
-              </button>
+              {!current.global && (
+                <button className="btn" type="button" onClick={() => change((s) => s.steps.push(NEW_STEP.linear()))}>
+                  Add Linear move
+                </button>
+              )}
               <button className="btn" type="button" style={{ marginLeft: 'auto' }} title="Make a copy of this action to change" onClick={duplicateSet}>
                 Duplicate action
               </button>

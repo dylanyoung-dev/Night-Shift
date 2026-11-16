@@ -20,6 +20,7 @@ const api: NightShiftApi = {
   openStepsFile: () => ipcRenderer.invoke('steps:open'),
   getRuns: () => ipcRenderer.invoke('runs:get'),
   startRun: (issueId: string, setName?: string) => ipcRenderer.invoke('runs:start', issueId, setName),
+  startGlobalRun: (name: string) => ipcRenderer.invoke('runs:startGlobal', name),
   stopRun: (runId: string) => ipcRenderer.invoke('runs:stop', runId),
   openLog: (runId: string) => ipcRenderer.invoke('runs:openLog', runId),
   readLog: (runId: string) => ipcRenderer.invoke('runs:readLog', runId),

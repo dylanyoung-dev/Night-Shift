@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { isActiveRun, orderStates, setLabel, type BoardData, type IssueUpdate, type LinearIssue, type Run, type Settings, type StepChoice, type StepsFile } from '../../shared/types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { globalRunKey, isActiveRun, orderStates, setLabel, type BoardData, type IssueUpdate, type LinearIssue, type Run, type Settings, type StepChoice, type StepsFile } from '../../shared/types'
 import Sidebar, { View } from './components/Sidebar'
 import Board from './components/Board'
 import RunPanel from './components/RunPanel'
@@ -138,7 +138,6 @@ export default function App(): JSX.Element {
   const issue = board.issues.find((i) => i.id === selectedIssue) ?? null
   const glimpseIssue = glimpse ? board.issues.find((i) => i.id === glimpse.id) ?? null : null
   const run = selectedIssue ? latestRun.get(selectedIssue) ?? null : null
-  const runActive = Boolean(run && isActiveRun(run.status))
   const activeRuns = runs.filter((r) => isActiveRun(r.status))
   const needsYou = runs.filter((r) => r.status === 'waiting')
 
@@ -163,8 +162,32 @@ export default function App(): JSX.Element {
         .map((s) => ({ name: s.name, label: setLabel(s) })),
     [steps]
   )
-  const issueSets = issue ? setsFor(issue.stateName) : []
   const logIssue = logRun ? board.issues.find((i) => i.id === logRun.issueId) ?? null : null
+
+  // Global actions (not tied to a ticket) for the Run menu at the top of the board.
+  const globalActions = (steps?.sets ?? []).filter((s) => s.global)
+  const startMenuRef = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!startMenu) return
+    const close = (e: MouseEvent | KeyboardEvent): void => {
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !startMenuRef.current?.contains(e.target as Node)) setStartMenu(false)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', close)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', close)
+    }
+  }, [startMenu])
+
+  async function startGlobal(name: string): Promise<void> {
+    setStartMenu(false)
+    if (!api.startGlobalRun) return setMessage('Restart Night Shift to run global actions.')
+    const res = await api.startGlobalRun(name)
+    if ('error' in res) return setMessage(res.error)
+    setMessage(null)
+    setLogRunId(res.id) // show its log straight away
+  }
 
   async function start(issueId: string, setName?: string): Promise<Run | null> {
     setStartMenu(false)
@@ -245,29 +268,41 @@ export default function App(): JSX.Element {
                 <button className="btn" type="button" onClick={() => void api.refreshBoard()}>
                   Sync Linear
                 </button>
-                <span className="start-run">
+                <span className="start-run" ref={startMenuRef}>
                   <button
                     className="btn primary"
                     type="button"
-                    disabled={!issue || runActive || !issueSets.length}
-                    aria-haspopup={issueSets.length > 1 ? 'menu' : undefined}
-                    aria-expanded={issueSets.length > 1 ? startMenu : undefined}
-                    title={!issue ? 'Select a ticket first' : !issueSets.length ? `No actions for ${issue.stateName}` : `Run an action on ${issue.identifier}`}
-                    onClick={() => {
-                      if (!issue) return
-                      if (issueSets.length > 1) setStartMenu((o) => !o)
-                      else void start(issue.id, issueSets[0]?.name)
-                    }}
+                    disabled={!globalActions.length}
+                    aria-haspopup="menu"
+                    aria-expanded={startMenu}
+                    title={
+                      globalActions.length
+                        ? `Run a global action from ${settings?.baseBranch || 'the base branch'}`
+                        : 'No global actions yet. Make one on the Actions page and mark it Global.'
+                    }
+                    onClick={() => setStartMenu((o) => !o)}
                   >
-                    {issueSets.length > 1 ? 'Run action ▾' : issueSets[0] ? `Run: ${issueSets[0].label}` : 'Run action'}
+                    Run action ▾
                   </button>
-                  {startMenu && issue && issueSets.length > 1 && (
+                  {startMenu && globalActions.length > 0 && (
                     <span className="start-menu" role="menu">
-                      {issueSets.map((s) => (
-                        <button key={s.name} type="button" role="menuitem" className="issue-menu-item" onClick={() => void start(issue.id, s.name)}>
-                          <span className="lbl">{s.label}</span>
-                        </button>
-                      ))}
+                      <span className="start-menu-note">Global actions · from {settings?.baseBranch || 'the base branch'}</span>
+                      {globalActions.map((s) => {
+                        const going = runs.find((r) => r.issueId === globalRunKey(s.name) && isActiveRun(r.status))
+                        return (
+                          <button
+                            key={s.name}
+                            type="button"
+                            role="menuitem"
+                            className="issue-menu-item"
+                            title={going ? 'Already running. Click to open its log.' : `Run ${s.name}`}
+                            onClick={() => (going ? (setStartMenu(false), setLogRunId(going.id)) : void startGlobal(s.name))}
+                          >
+                            <span className="lbl">{setLabel(s)}</span>
+                            {going && <span className="hint">running</span>}
+                          </button>
+                        )
+                      })}
                     </span>
                   )}
                 </span>

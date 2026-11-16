@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { isActiveRun } from '../shared/types'
+import { globalRunKey, isActiveRun } from '../shared/types'
 import type { Automation, AutomationStatus, LinearIssue, LinearState, Run, Settings, StepSet, StepsFile } from '../shared/types'
 
 export interface SchedulerDeps {
@@ -12,6 +12,8 @@ export interface SchedulerDeps {
   fetchIssues(stateIds: string[], projectIds: string[] | undefined): Promise<LinearIssue[]>
   loadSteps(): StepsFile
   setForState(file: StepsFile, state: string, setName?: string | null): StepSet | undefined
+  globalSet(file: StepsFile, name: string | null | undefined): StepSet | undefined
+  startGlobal(set: StepSet, by: { id: string; name: string }): void
   isBusy(issueId: string): boolean
   runs(): Run[]
   start(issue: LinearIssue, set: StepSet, by: { id: string; name: string }): void
@@ -138,6 +140,7 @@ export class AutomationScheduler {
   private async pick(a: Automation, now: number, manual: boolean): Promise<Partial<Stored>> {
     const s = this.deps.getSettings()
     const st = this.status[a.id] ?? {}
+    if (a.kind === 'global') return this.pickGlobal(a, now, st)
     if (!this.deps.getKey()) return { lastResult: 'Add your Linear API key in Settings.', retryAt: now + WAIT_RETRY_MS }
     if (!s.repoPath) return { lastResult: 'Set the repo path in Settings.', retryAt: now + WAIT_RETRY_MS }
     if (!a.states.length) return { lastResult: 'Pick at least one state.', retryAt: now + WAIT_RETRY_MS }
@@ -216,6 +219,29 @@ export class AutomationScheduler {
       lastResult:
         (picked.length ? `Started ${picked.map((i) => i.identifier).join(', ')}.` : 'No tickets to run.') +
         (finished ? ` Finished its ${a.maxRuns} runs and switched off.` : '')
+    }
+  }
+
+  // A global action on a schedule: one run each time, skipped while the last one is still going.
+  private pickGlobal(a: Automation, now: number, st: Stored): Partial<Stored> {
+    const s = this.deps.getSettings()
+    if (!s.repoPath) return { lastResult: 'Set the repo path in Settings.', retryAt: now + WAIT_RETRY_MS }
+    if (!a.globalAction) return { lastResult: 'Pick a global action to run.', retryAt: now + WAIT_RETRY_MS }
+    const set = this.deps.globalSet(this.deps.loadSteps(), a.globalAction)
+    if (!set) return { lastResult: `"${a.globalAction}" isn't a global action any more. Check the Actions page.`, retryAt: now + WAIT_RETRY_MS }
+    const by = { id: a.id, name: a.name }
+    if (this.deps.isBusy(globalRunKey(set.name))) {
+      return { lastRunAt: now, retryAt: undefined, lastResult: `Skipped: the last run of ${set.name} is still going.` }
+    }
+    this.deps.startGlobal(set, by)
+    const runsDone = (st.runsDone ?? 0) + 1
+    const finished = a.maxRuns !== null && runsDone >= a.maxRuns
+    if (finished) this.deps.disable(a.id)
+    return {
+      lastRunAt: now,
+      retryAt: undefined,
+      runsDone,
+      lastResult: `Started ${set.name}.` + (finished ? ` Finished its ${a.maxRuns} runs and switched off.` : '')
     }
   }
 

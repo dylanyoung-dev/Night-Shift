@@ -2,9 +2,10 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, screen,
 import { basename, join } from 'path'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'fs'
 import type { BoardData, ImportGroupKey, IssueUpdate, LinearState, SettingsUpdate, StepSet } from '../shared/types'
+import { globalRunKey } from '../shared/types'
 import { getLinearKey, getSettings, updateSettings } from './settings'
 import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, removeLabelByName, updateIssue, fetchIssueDetail, fetchLinearImage } from './linear'
-import { loadSteps, saveSteps, setForState, setsForState, starterSteps, STEPS_RELATIVE_PATH } from './steps'
+import { globalSet, loadSteps, saveSteps, setForState, setsForState, starterSteps, STEPS_RELATIVE_PATH } from './steps'
 import { Runner } from './runner'
 import { getUsage, usageProgress } from './usage'
 import { checkLimits, getLimits, loadLimits, onLimitsChange } from './limits'
@@ -93,6 +94,8 @@ const scheduler = new AutomationScheduler({
   },
   loadSteps: () => loadSteps(getSettings().repoPath),
   setForState,
+  globalSet,
+  startGlobal: (set, by) => void runner.startGlobal(set, by),
   isBusy: (id) => runner.isBusy(id),
   runs: () => runner.list(),
   start: (issue, set, by) => void runner.start(issue, set, by),
@@ -359,6 +362,16 @@ function registerIpc(): void {
     const set = setName ? sets.find((x) => x.name === setName) : sets.length === 1 ? sets[0] : undefined
     if (!set) return { error: setName ? `"${setName}" doesn't cover "${issue.stateName}" any more.` : `Pick which action to run: ${sets.map((x) => x.label || x.name).join(' or ')}.` }
     return runner.start(issue, set)
+  })
+  // A global action from the Run menu: no ticket, runs from the base branch.
+  ipcMain.handle('runs:startGlobal', (_e, name: string) => {
+    const s = getSettings()
+    if (!s.repoPath) return { error: 'Set the repo path in Settings first.' }
+    if (!s.baseBranch) return { error: 'Pick a base branch first.' }
+    const set = globalSet(loadSteps(s.repoPath), String(name ?? ''))
+    if (!set) return { error: `"${name}" isn't a global action any more. Check the Actions page.` }
+    if (runner.isBusy(globalRunKey(set.name))) return { error: `${set.name} is already running.` }
+    return runner.startGlobal(set)
   })
   ipcMain.handle('runs:stop', (_e, runId: string) => runner.stop(runId))
   ipcMain.handle('runs:reply', (_e, runId: string, text: string) => runner.reply(runId, String(text ?? '')))

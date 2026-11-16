@@ -39,6 +39,8 @@ export interface Automation {
   projectId: string | null // Night Shift project to take tickets from; null = all of the team
   states: string[] // Linear state names
   stepSet: string | null // which set to run when a state has several; null = the state's first set
+  kind?: 'tickets' | 'global' // global: runs a global action (no tickets) on a schedule; missing = tickets
+  globalAction?: string | null // kind global: the global action's name
   runner: 'local' // 'cloud' later
   days: number[] // 0 = Sunday ... 6 = Saturday; empty = every day
   window: { start: string; end: string } | null // 'HH:MM' local time; start > end crosses midnight
@@ -212,7 +214,8 @@ export interface StepDef {
 export interface StepSet {
   name: string
   label?: string // button text; defaults to the name
-  states: string[] // Linear state names
+  global?: boolean // not tied to a ticket: runs from the base branch, from the Run menu or an automation
+  states: string[] // Linear state names (empty for a global action)
   worktree?: WorktreeConfig // overrides the Settings for runs of this set
   steps: StepDef[]
   onFailure?: OnFailure // what happens to the ticket in Linear when a run of this set fails
@@ -252,6 +255,11 @@ export function setLabel(set: { name: string; label?: string }): string {
   return set.label?.trim() || set.name
 }
 
+// What a global action's runs use in place of a ticket id, so one runs at a time per action.
+export function globalRunKey(actionName: string): string {
+  return `global:${actionName.trim().toLowerCase()}`
+}
+
 export function isActiveRun(status: RunStatus): boolean {
   return status === 'queued' || status === 'running' || status === 'waiting'
 }
@@ -275,7 +283,8 @@ export function resumableStep(run: Run): number {
 
 export interface Run {
   id: string
-  issueId: string
+  issueId: string // a global action's runs use globalRunKey(name) instead of a ticket id
+  global?: boolean // a global action: no ticket, runs from the base branch
   identifier: string
   title: string
   stepsName: string
@@ -432,6 +441,7 @@ export interface NightShiftApi {
   openStepsFile(): Promise<void>
   getRuns(): Promise<Run[]>
   startRun(issueId: string, setName?: string): Promise<Run | { error: string }> // setName picks one of the state's sets
+  startGlobalRun?(name: string): Promise<Run | { error: string }> // a global action, from the base branch
   stopRun(runId: string): Promise<void>
   openLog(runId: string): Promise<void>
   updateIssue(issueId: string, update: IssueUpdate): Promise<{ ok: true } | { error: string }>

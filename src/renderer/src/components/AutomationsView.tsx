@@ -96,10 +96,13 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
   const st = current ? status[current.id] : undefined
   const saved = current ? settings.automations.find((a) => a.id === current.id) : undefined
 
+  const isGlobal = current?.kind === 'global'
+  const globalNames = (steps?.sets ?? []).filter((s) => s.global).map((s) => s.name)
+
   // The sets of steps on each state; states without one can't be picked.
   const setsByState = useMemo(() => {
     const m = new Map<string, string[]>()
-    for (const set of steps?.sets ?? []) for (const s of set.states) m.set(s.toLowerCase(), [...(m.get(s.toLowerCase()) ?? []), set.name])
+    for (const set of steps?.sets ?? []) for (const s of set.global ? [] : set.states) m.set(s.toLowerCase(), [...(m.get(s.toLowerCase()) ?? []), set.name])
     return m
   }, [steps])
   // Sets covering the chosen states; a choice only matters when a state has more than one.
@@ -168,7 +171,15 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
               {a.name || 'Untitled'}
               {!a.enabled && <span className="badge off">Off</span>}
             </span>
-            <span className="sub">{a.states.length ? `${a.states.join(', ')} · ${when(a)}` : 'No states yet'}</span>
+            <span className="sub">
+              {a.kind === 'global'
+                ? a.globalAction
+                  ? `Global: ${a.globalAction} · ${when(a)}`
+                  : 'No global action yet'
+                : a.states.length
+                  ? `${a.states.join(', ')} · ${when(a)}`
+                  : 'No states yet'}
+            </span>
           </button>
         ))}
         {!list.length && <div className="note" style={{ padding: '0 12px' }}>No automations yet.</div>}
@@ -229,6 +240,28 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
                     {current.enabled ? 'On' : 'Off'}
                   </label>
                 </div>
+                <div className="choices" role="radiogroup" aria-label="What it runs">
+                  <label className={`choice${!isGlobal ? ' active' : ''}`}>
+                    <input type="radio" name="au-kind" checked={!isGlobal} onChange={() => change({ kind: 'tickets', globalAction: null })} />
+                    <span>
+                      <strong>Tickets</strong>
+                      <span className="sub">Runs the actions set up for tickets in chosen states.</span>
+                    </span>
+                  </label>
+                  <label className={`choice${isGlobal ? ' active' : ''}`}>
+                    <input
+                      type="radio"
+                      name="au-kind"
+                      checked={isGlobal}
+                      onChange={() => change({ kind: 'global', mode: 'schedule', globalAction: current.globalAction ?? globalNames[0] ?? null })}
+                    />
+                    <span>
+                      <strong>A global action</strong>
+                      <span className="sub">Runs a global action from the base branch on a schedule. No tickets involved.</span>
+                    </span>
+                  </label>
+                </div>
+                {!isGlobal && (
                 <div className="choices" role="radiogroup" aria-label="Type">
                   <label className={`choice${current.mode === 'watch' ? ' active' : ''}`}>
                     <input type="radio" name="au-mode" checked={current.mode === 'watch'} onChange={() => change({ mode: 'watch' })} />
@@ -245,6 +278,7 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
                     </span>
                   </label>
                 </div>
+                )}
                 <label className="field">
                   Agent
                   <select className="input" value={current.runner} onChange={() => change({ runner: 'local' })}>
@@ -257,6 +291,34 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
               </div>
             </section>
 
+            {isGlobal ? (
+              <section className="settings-section" aria-labelledby="au-global">
+                <div className="section-side">
+                  <h2 id="au-global">Global action</h2>
+                  <p className="section-intro">
+                    Each run checks out the latest {settings.baseBranch || 'base branch'} and runs the action there. If the last run is still going, that
+                    turn is skipped.
+                  </p>
+                </div>
+                <div className="form single">
+                  <label className="field">
+                    Action
+                    <select className="input" value={current.globalAction ?? ''} onChange={(e) => change({ globalAction: e.target.value || null })}>
+                      <option value="">Pick a global action…</option>
+                      {current.globalAction && !globalNames.includes(current.globalAction) && (
+                        <option value={current.globalAction}>{current.globalAction} (not a global action any more)</option>
+                      )}
+                      {globalNames.map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                    {!globalNames.length && <span className="note">No global actions yet. Make one on the Actions page and mark it Global.</span>}
+                  </label>
+                </div>
+              </section>
+            ) : (
             <section className="settings-section" aria-labelledby="au-tickets">
               <div className="section-side">
                 <h2 id="au-tickets">Tickets</h2>
@@ -318,6 +380,8 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
                 )}
               </div>
             </section>
+
+            )}
 
             <section className="settings-section" aria-labelledby="au-when">
               <div className="section-side">
@@ -424,6 +488,7 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
               </div>
             </section>
 
+            {!isGlobal && (
             <section className="settings-section" aria-labelledby="au-pick">
               <div className="section-side">
                 <h2 id="au-pick">Picking tickets</h2>
@@ -519,6 +584,8 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
                 )}
               </div>
             </section>
+
+            )}
 
             <section className="settings-section" aria-labelledby="au-status">
               <div className="section-side">

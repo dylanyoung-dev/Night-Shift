@@ -105,7 +105,9 @@ export function cleanAutomations(raw: unknown, projects: NightShiftProject[]): A
       id,
       name: String(a.name ?? '').trim() || 'Untitled automation',
       enabled: a.enabled === true,
-      mode: a.mode === 'watch' ? 'watch' : 'schedule',
+      kind: a.kind === 'global' ? 'global' : 'tickets',
+      globalAction: a.kind === 'global' && typeof a.globalAction === 'string' && a.globalAction.trim() ? a.globalAction.trim() : null,
+      mode: a.kind === 'global' ? 'schedule' : a.mode === 'watch' ? 'watch' : 'schedule', // global actions only run on a schedule
       projectId: a.projectId && projects.some((p) => p.id === a.projectId) ? a.projectId : null,
       states: Array.isArray(a.states) ? [...new Set(a.states.map(String).filter(Boolean))] : [],
       stepSet: typeof a.stepSet === 'string' && a.stepSet.trim() ? a.stepSet.trim() : null,

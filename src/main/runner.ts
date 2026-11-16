@@ -3,11 +3,12 @@ import { spawn, ChildProcess } from 'child_process'
 import type { Writable } from 'stream'
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
 import { isAbsolute, join, normalize } from 'path'
-import { CLAUDE_RUN_FLAGS, DEFAULT_WORKTREE_PATH, isActiveRun, resumableStep } from '../shared/types'
+import { CLAUDE_RUN_FLAGS, DEFAULT_WORKTREE_PATH, globalRunKey, isActiveRun, resumableStep, setLabel } from '../shared/types'
 import type { LinearIssue, Run, RunStep, StepDef, StepSet, WorktreeMode } from '../shared/types'
 import { ClaudeStreamFormatter, needsYou, parseClaudeCommand } from './claudeStream'
 import { planAfterRun, type FailurePlan } from './failure'
 import { noteStreamOutput } from './limits'
+import { prepareBaseCheckout } from './git'
 
 const TAIL_CHARS = 20000
 const AUTO_RERUN_HOURS = 12
@@ -186,6 +187,42 @@ export class Runner {
     return run
   }
 
+  // A global action: no ticket. Night Shift checks out the base branch in the action's own folder
+  // (a fresh detached worktree each run), and every step runs there.
+  startGlobal(def: StepSet, by?: { id: string; name: string }): Run {
+    const repo = this.deps.getRepoPath()
+    const base = this.deps.getBaseBranch()
+    const slug = `global-${def.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'action'}`
+    const runId = `${slug}-${Date.now().toString(36)}`
+    const run: Run = {
+      id: runId,
+      issueId: globalRunKey(def.name),
+      global: true,
+      identifier: setLabel(def),
+      title: `Global action, from ${base}`,
+      stepsName: def.name,
+      ...(by ? { startedBy: by.name, automationId: by.id } : {}),
+      runner: 'local',
+      status: 'queued',
+      branch: base,
+      worktreeMode: 'nightshift',
+      worktree: resolveWorktreePath(this.deps.getWorktreePath(), { repo, id: slug, ticket: slug, branch: slug }),
+      steps: [
+        { name: `Check out ${base}`, type: 'script', status: 'pending' },
+        ...def.steps.map((s) => ({ name: s.name, type: s.type, status: 'pending' as const }))
+      ],
+      currentStep: -1,
+      createdAt: Date.now(),
+      logFile: join(this.dir, 'logs', `${runId}.log`),
+      logTail: ''
+    }
+    this.runs.unshift(run)
+    this.queue.push({ run, def })
+    this.changed()
+    this.pump()
+    return run
+  }
+
   stop(runId: string): void {
     const queued = this.queue.findIndex((a) => a.run.id === runId)
     if (queued >= 0) {
@@ -218,15 +255,40 @@ export class Runner {
     const { run, def } = a
     run.status = 'running'
     run.startedAt = Date.now()
-    this.log(run, `Night Shift: ${run.stepsName} for ${run.identifier} (${run.title})\n`)
     const agentWorktree = run.worktreeMode === 'agent'
-    this.log(run, agentWorktree ? 'Worktree: the agent sets it up\n' : `Worktree: ${run.worktree}\n`)
     let worktreeReady = !agentWorktree && existsSync(run.worktree)
+    // Global actions start with a fresh checkout of the base branch (run.steps[0]).
+    const offset = run.global ? 1 : 0
+    if (run.global) {
+      this.log(run, `Night Shift: ${run.stepsName} (global action, from ${run.branch})\n`)
+      const rs = run.steps[0]
+      run.currentStep = 0
+      rs.status = 'running'
+      rs.startedAt = Date.now()
+      rs.command = `git worktree add --detach ${run.worktree} origin/${run.branch}`
+      this.changed()
+      this.log(run, `\n▸ ${rs.name}\n`)
+      try {
+        this.log(run, (await prepareBaseCheckout(this.deps.getRepoPath(), run.branch, run.worktree)) + '\n')
+        rs.status = 'done'
+        worktreeReady = true
+      } catch (err) {
+        this.log(run, `Couldn't check out ${run.branch}: ${(err as Error).message}\n`)
+        rs.status = 'failed'
+        run.steps.slice(1).forEach((s) => (s.status = 'skipped'))
+        run.status = a.stopRequested ? 'stopped' : 'failed'
+      }
+      rs.endedAt = Date.now()
+      this.changed()
+    } else {
+      this.log(run, `Night Shift: ${run.stepsName} for ${run.identifier} (${run.title})\n`)
+      this.log(run, agentWorktree ? 'Worktree: the agent sets it up\n' : `Worktree: ${run.worktree}\n`)
+    }
 
-    for (let i = 0; i < def.steps.length; i++) {
+    for (let i = 0; i < def.steps.length && run.status === 'running'; i++) {
       const step = def.steps[i]
-      const rs = run.steps[i]
-      run.currentStep = i
+      const rs = run.steps[i + offset]
+      run.currentStep = i + offset
 
       const skip = this.skipReason(step, run)
       if (skip) {
@@ -242,7 +304,9 @@ export class Runner {
 
       let ok = false
       try {
-        if (step.type === 'linear') {
+        if (step.type === 'linear' && run.global) {
+          this.log(run, `\n▸ ${step.name}: a global action has no ticket to move\n`)
+        } else if (step.type === 'linear') {
           this.log(run, `\n▸ ${step.name}: move ${run.identifier} to "${step.moveTo}"\n`)
           await this.deps.moveIssue(run.issueId, step.moveTo ?? '')
           ok = true
@@ -263,14 +327,14 @@ export class Runner {
 
       if (a.stopRequested) {
         rs.status = 'failed'
-        run.steps.slice(i + 1).forEach((s) => (s.status = 'skipped'))
+        run.steps.slice(i + offset + 1).forEach((s) => (s.status = 'skipped'))
         run.status = 'stopped'
         this.log(run, '\nStopped by you.\n')
         break
       }
       rs.status = ok ? 'done' : 'failed'
       if (!ok && step.onFail !== 'continue') {
-        run.steps.slice(i + 1).forEach((s) => (s.status = 'skipped'))
+        run.steps.slice(i + offset + 1).forEach((s) => (s.status = 'skipped'))
         run.status = 'failed'
         this.log(run, `\nStep failed: ${step.name}. Run stopped.\n`)
         break
@@ -286,6 +350,7 @@ export class Runner {
 
   // Failed: label the ticket, comment and send it back, as the set's onFailure says. Done: clear the label.
   private async applyAfterRun(run: Run, def: StepSet): Promise<void> {
+    if (run.global) return // no ticket to label or move
     const plan = planAfterRun(run, def, this.runs)
     if (!plan) return
     try {
@@ -317,8 +382,8 @@ export class Runner {
 
   private vars(run: Run): Record<string, string> {
     return {
-      TICKET: run.identifier,
-      ID: run.identifier.toLowerCase(),
+      TICKET: run.global ? '' : run.identifier,
+      ID: run.global ? run.id.replace(/-[0-9a-z]+$/, '') : run.identifier.toLowerCase(),
       BRANCH: run.branch,
       BASE: this.deps.getBaseBranch(),
       WORKTREE: run.worktree,
@@ -370,7 +435,7 @@ export class Runner {
       // When Claude ends a turn: wait for the person if it needs them, otherwise end the session.
       const onResult = (ev: Record<string, any>): void => {
         if (!session || !a.stdin || a.stdin.destroyed || a.stopRequested) return
-        const reason = needsYou(ev)
+        const reason = needsYou(ev, fmt?.hookBlocked)
         if (!reason) {
           a.stdin.end()
           return

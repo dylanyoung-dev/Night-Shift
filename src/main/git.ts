@@ -1,5 +1,5 @@
 import { execFile } from 'child_process'
-import { existsSync } from 'fs'
+import { existsSync, rmSync } from 'fs'
 import type { RepoBranches } from '../shared/types'
 
 function git(cwd: string, args: string[], timeout = 15000): Promise<string> {
@@ -51,4 +51,32 @@ export async function listBranches(repoPath: string, fetch = false): Promise<Rep
     if (/ENOENT/.test(msg)) return { isRepo: false, branches: [], error: "Couldn't run git. Is it installed and on PATH?" }
     return { isRepo: false, branches: [], error: msg }
   }
+}
+
+// A global action's checkout: a detached worktree at the latest base branch, replaced on every
+// run so it always starts clean. Returns what happened, for the run log.
+export async function prepareBaseCheckout(repoPath: string, base: string, dir: string): Promise<string> {
+  const lines: string[] = []
+  let ref = base
+  try {
+    await git(repoPath, ['fetch', 'origin', base], 120000)
+    await git(repoPath, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`])
+    ref = `origin/${base}`
+    lines.push(`Fetched ${ref}`)
+  } catch (err) {
+    lines.push(`Couldn't fetch origin/${base} (${(err as Error).message.split('\n')[0]}); using the local ${base}`)
+  }
+  if (existsSync(dir)) {
+    try {
+      await git(repoPath, ['worktree', 'remove', '--force', dir], 60000)
+    } catch {
+      rmSync(dir, { recursive: true, force: true })
+      await git(repoPath, ['worktree', 'prune']).catch(() => '')
+    }
+    lines.push(`Removed the previous checkout`)
+  }
+  await git(repoPath, ['worktree', 'add', '--detach', dir, ref], 120000)
+  const head = (await git(dir, ['log', '-1', '--format=%h %s']).catch(() => '')).trim()
+  lines.push(`Checked out ${ref} in ${dir}${head ? ` (${head})` : ''}`)
+  return lines.join('\n')
 }

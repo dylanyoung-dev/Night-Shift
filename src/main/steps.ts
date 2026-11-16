@@ -59,12 +59,14 @@ function normalizeOnFailure(raw: unknown): OnFailure | undefined {
 
 function normalizeSet(raw: Raw, fallbackName: string, states: string[]): StepSet {
   const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : undefined
-  const onFailure = normalizeOnFailure(raw.onFailure)
+  const global = raw.global === true
+  const onFailure = global ? undefined : normalizeOnFailure(raw.onFailure) // no ticket to send back
   return {
     name: String(raw.name ?? fallbackName).trim() || fallbackName,
     ...(label ? { label } : {}),
-    states,
-    worktree: normalizeWorktree(raw.worktree),
+    ...(global ? { global: true } : {}),
+    states: global ? [] : states,
+    worktree: global ? undefined : normalizeWorktree(raw.worktree), // global: always its own checkout of the base branch
     steps: (Array.isArray(raw.steps) ? (raw.steps as Raw[]) : []).map(normalizeStep),
     ...(onFailure ? { onFailure } : {})
   }
@@ -105,7 +107,8 @@ export function checkSets(sets: StepSet[]): string[] {
     set.steps.forEach((st, i) => {
       const where = `"${set.name}" step ${i + 1}`
       if (!st.name.trim()) problems.push(`${where} needs a name.`)
-      if (st.type === 'linear' && !st.moveTo?.trim()) problems.push(`${where} needs a Linear state to move to.`)
+      if (st.type === 'linear' && set.global) problems.push(`${where} moves a ticket, but "${set.name}" is a global action with no ticket.`)
+      else if (st.type === 'linear' && !st.moveTo?.trim()) problems.push(`${where} needs a Linear state to move to.`)
       if (st.type !== 'linear' && !st.run?.trim()) problems.push(`${where} needs a command.`)
     })
   }
@@ -133,7 +136,16 @@ export function loadSteps(repoPath: string): StepsFile {
 // Every set of steps for a ticket in this state, in file order (one button each).
 export function setsForState(file: StepsFile, stateName: string): StepSet[] {
   const s = stateName.toLowerCase()
-  return file.sets.filter((set) => set.states.some((st) => st.toLowerCase() === s))
+  return file.sets.filter((set) => !set.global && set.states.some((st) => st.toLowerCase() === s))
+}
+
+// Actions not tied to a ticket: the Run menu at the top of the board, and global automations.
+export function globalSets(file: StepsFile): StepSet[] {
+  return file.sets.filter((set) => set.global)
+}
+
+export function globalSet(file: StepsFile, name: string | null | undefined): StepSet | undefined {
+  return name ? globalSets(file).find((x) => x.name.toLowerCase() === name.toLowerCase()) : undefined
 }
 
 // One set for a state: the named one if given (and it covers the state), else the first.
@@ -160,6 +172,8 @@ const HEADER = `# Night Shift actions. Edited from the Actions page or by hand; 
 # Variables: $TICKET (IGN-644) $ID (ign-644) $BRANCH $BASE $WORKTREE $REPO $WORKTREE_MODE
 #   (also set as environment variables NS_TICKET, NS_ID, ...)
 # Actions only say what runs. To start runs on their own, use the Automations page.
+# global: true  makes an action global: no states or ticket. It runs from a fresh checkout of
+#   $BASE (in $WORKTREE), started from the Run menu at the top of the board or an automation.
 # worktree (optional, per action): mode: nightshift | agent, path: "D:/worktrees/$ID"  (overrides Settings)
 # step type: script | claude | linear     onFail: stop | continue
 # cwd: repo | worktree     only: nightshift | agent  (run the step only in that worktree mode)
@@ -174,7 +188,8 @@ export function stringifySteps(sets: StepSet[]): string {
     sets: sets.map((set) => {
       const out: Raw = { name: set.name.trim() }
       if (set.label?.trim() && set.label.trim() !== set.name.trim()) out.label = set.label.trim()
-      out.states = set.states
+      if (set.global) out.global = true
+      else out.states = set.states
       if (set.worktree?.mode || set.worktree?.path) {
         const wt: Raw = {}
         if (set.worktree.mode) wt.mode = set.worktree.mode

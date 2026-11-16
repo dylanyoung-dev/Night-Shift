@@ -5,6 +5,8 @@
 
 const MAX_OUTPUT_LINES = 40
 const MAX_LINE = 400
+// A tool result that came from a repo hook refusing the call, not from a missing permission.
+const HOOK_BLOCK = /\bhook (error|blocked)\b|^Blocked:/i
 
 type Json = Record<string, any>
 
@@ -122,6 +124,30 @@ export class ClaudeStreamFormatter {
     return shown.join('\n') + '\n'
   }
 
+  // Heartbeats Claude Code sends every 30s while a tool or hook runs. Shown now and then, so a long
+  // command or a repo hook (Stop hooks run before the turn can end) doesn't look like a dead session.
+  private progress(ev: Json): string {
+    if (ev.heartbeat !== true || typeof ev.elapsed_time_seconds !== 'number') return ''
+    const secs = ev.elapsed_time_seconds as number
+    const id = String(ev.parent_tool_use_id ?? ev.tool_use_id ?? '')
+    const hook = /^hook-([A-Za-z]+)-/.exec(String(ev.tool_use_id ?? ''))?.[1]
+    const key = hook ? `hook:${hook}:${id}` : id
+    const first = !this.progressSeen.has(key)
+    this.progressSeen.add(key)
+    const mins = Math.round(secs / 60)
+    if (hook) {
+      if (first) return `⋯ Running the repo's ${hook} hooks. Claude Code waits for them before it ends the turn.\n`
+      return secs % 180 === 0 ? `⋯ ${hook} hooks still running · ${mins} min\n` : ''
+    }
+    const call = this.calls.get(id)
+    const pad = '    '.repeat(call?.depth ?? 0)
+    // Once at a minute, then every 3 minutes.
+    if (secs === 60 || (secs > 60 && secs % 180 === 0)) return `${pad}  ⋯ ${call ? toolLabel(call.name) : 'Tool'} still running · ${mins} min\n`
+    return ''
+  }
+  private progressSeen = new Set<string>()
+  readonly hookBlocked = new Set<string>() // tool calls a repo hook refused
+
   private line(raw: string): string {
     const trimmed = raw.trim()
     if (!trimmed) return ''
@@ -165,6 +191,9 @@ export class ClaudeStreamFormatter {
           if (part.type !== 'tool_result') continue
           const call = this.calls.get(part.tool_use_id)
           const callPad = '    '.repeat(call?.depth ?? depth)
+          // A repo hook refused the call (e.g. a branch guard). Claude Code reports these as permission
+          // denials too, but no flag fixes them; Claude reads the reason and adjusts.
+          if (part.is_error === true && HOOK_BLOCK.test(textOf(part.content))) this.hookBlocked.add(String(part.tool_use_id))
           out += this.output(call, part.content, part.is_error === true, callPad)
         }
         return out
@@ -174,7 +203,10 @@ export class ClaudeStreamFormatter {
         const cost = typeof ev.total_cost_usd === 'number' ? `$${ev.total_cost_usd.toFixed(2)}` : ''
         const turns = typeof ev.num_turns === 'number' ? `${ev.num_turns} turns` : ''
         let out = `\n● Claude ${ev.is_error ? `stopped with an error (${ev.subtype ?? 'error'})` : 'finished its turn'}${[turns, secs, cost].filter(Boolean).length ? ` · ${[turns, secs, cost].filter(Boolean).join(' · ')}` : ''}\n`
-        const denials = Array.isArray(ev.permission_denials) ? (ev.permission_denials as Json[]) : []
+        const all = Array.isArray(ev.permission_denials) ? (ev.permission_denials as Json[]) : []
+        const byHook = all.filter((d) => this.hookBlocked.has(String(d.tool_use_id)))
+        const denials = all.filter((d) => !this.hookBlocked.has(String(d.tool_use_id)))
+        if (byHook.length) out += `  ⛔ The repo's hooks blocked ${byHook.length} ${byHook.length === 1 ? 'call' : 'calls'}. Claude was told why (see ✗ above).\n`
         if (denials.length) {
           const names = [...new Set(denials.map((d) => toolLabel(String(d.tool_name ?? d.tool ?? 'unknown'))))]
           out += `  ✗ Permission denied ${denials.length}× for: ${names.join(', ')}\n`
@@ -186,8 +218,10 @@ export class ClaudeStreamFormatter {
         this.onResult?.(ev)
         return out
       }
+      case 'tool_progress':
+        return this.progress(ev)
       default:
-        return '' // rate limits, hooks and other housekeeping
+        return '' // rate limits and other housekeeping
     }
   }
 }
@@ -212,8 +246,11 @@ const ASKS_YOU =
   /\b(should I|shall I|do you want|would you like|let me know|please (confirm|approve|provide|choose|decide|reply|advise)|can you (confirm|provide|check|clarify)|could you|need(s)? (you|your|input|approval|a decision|confirmation)|waiting (for|on) you|your call|which (one|option|approach) (do|would|should)|before I (proceed|continue|go ahead)|how would you like)\b/i
 
 // After Claude ends a turn: a reason if it needs the person, null if the step is done.
-export function needsYou(result: Record<string, any>): string | null {
-  const denials = Array.isArray(result.permission_denials) ? (result.permission_denials as Record<string, any>[]) : []
+// hookBlocked: calls a repo hook refused. Those aren't yours to approve, so they don't pause the run.
+export function needsYou(result: Record<string, any>, hookBlocked?: Set<string>): string | null {
+  const denials = (Array.isArray(result.permission_denials) ? (result.permission_denials as Record<string, any>[]) : []).filter(
+    (d) => !hookBlocked?.has(String(d.tool_use_id))
+  )
   if (denials.length) {
     const names = [...new Set(denials.map((d) => toolLabel(String(d.tool_name ?? d.tool ?? 'a tool'))))]
     return `Permission denied for ${names.join(', ')}`
@@ -224,7 +261,7 @@ export function needsYou(result: Record<string, any>): string | null {
   const tail = text.slice(-600)
   if (/\?\s*\**\s*$/.test(text) || ASKS_YOU.test(tail)) {
     const questions = tail.split(/(?<=[.!?])\s+/).filter((s) => s.includes('?'))
-    return `Claude asked: ${clip(questions[questions.length - 1] ?? tail.slice(-160), 180)}`
+    return `Claude asked: ${clip((questions[questions.length - 1] ?? tail.slice(-160)).replace(/^[\s.,;:)\]-]+/, ''), 180)}`
   }
   return null
 }

@@ -74,3 +74,13 @@ sets:
       - name: Fix review comments
         type: claude
         run: claude -p "/review-fix $TICKET" --permission-mode auto --allowedTools mcp__claude_ai_Linear --output-format stream-json --verbose
+
+  # A global action: not tied to a ticket or state. It shows in the Run action menu at the top of
+  # the board and can run from an automation. Each run checks out the latest $BASE into its own
+  # folder ($WORKTREE, replaced every run) and the steps run there. $TICKET is empty; no Linear moves.
+  - name: Audit
+    global: true
+    steps:
+      - name: Audit the software factory
+        type: claude
+        run: claude -p "/audit" --permission-mode auto --allowedTools mcp__claude_ai_Linear --output-format stream-json --verbose
