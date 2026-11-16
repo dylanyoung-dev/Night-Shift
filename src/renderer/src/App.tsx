@@ -10,6 +10,8 @@ import ProjectsView from './components/ProjectsView'
 import AutomationsView from './components/AutomationsView'
 import RunsView from './components/RunsView'
 import UsageView from './components/UsageView'
+import GlimpsePanel from './components/GlimpsePanel'
+import UpdateBanner from './components/UpdateBanner'
 import FilterBar, { applyFilters, NO_FILTERS, type Filters } from './components/FilterBar'
 import BranchPicker from './components/BranchPicker'
 
@@ -22,6 +24,7 @@ export default function App(): JSX.Element {
   const [runs, setRuns] = useState<Run[]>([])
   const [logs, setLogs] = useState<Record<string, string>>({})
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null)
+  const [glimpse, setGlimpse] = useState<{ id: string; tab: 'ticket' | 'spec'; at: number } | null>(null) // ticket shown in the Linear panel
   const [message, setMessage] = useState<string | null>(null)
   // Log screens opened on top of the current view, newest last. Back goes to the one before,
   // then to the view underneath (board, Agents, Run history…).
@@ -31,12 +34,31 @@ export default function App(): JSX.Element {
     setLogStack((st) => (id === null ? [] : st[st.length - 1] === id ? st : [...st.filter((x) => x !== id), id]))
   const backFromLog = (): void => setLogStack((st) => st.slice(0, -1))
   const [filters, setFilters] = useState<Filters>(NO_FILTERS)
+  // Board swimlanes by a label group (Initiative, Area…). Remembered by group name, per viewer.
+  const [groupByName, setGroupByName] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('nightshift.groupBy')
+    } catch {
+      return null
+    }
+  })
+  const groupBy = board.team?.labelGroups?.find((g) => g.name === groupByName)?.id ?? null
+  function chooseGroupBy(id: string | null): void {
+    const name = board.team?.labelGroups?.find((g) => g.id === id)?.name ?? null
+    setGroupByName(name)
+    try {
+      if (name) localStorage.setItem('nightshift.groupBy', name)
+      else localStorage.removeItem('nightshift.groupBy')
+    } catch {
+      // per-viewer convenience only
+    }
+  }
   const [steps, setSteps] = useState<StepsFile | null>(null)
   const [startMenu, setStartMenu] = useState(false)
   const [switchingTo, setSwitchingTo] = useState<string | null>(null) // project name while its tickets load
   const columnOrder = settings?.columnOrder ?? []
   const shownBoard = useMemo(
-    () => ({ ...board, states: orderStates(board.states, columnOrder), issues: applyFilters(board.issues, filters) }),
+    () => ({ ...board, states: orderStates(board.states, columnOrder), issues: applyFilters(board.issues, filters, board.team) }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [board, filters, columnOrder.join('|')]
   )
@@ -114,6 +136,7 @@ export default function App(): JSX.Element {
   }, [runs])
 
   const issue = board.issues.find((i) => i.id === selectedIssue) ?? null
+  const glimpseIssue = glimpse ? board.issues.find((i) => i.id === glimpse.id) ?? null : null
   const run = selectedIssue ? latestRun.get(selectedIssue) ?? null : null
   const runActive = Boolean(run && isActiveRun(run.status))
   const activeRuns = runs.filter((r) => isActiveRun(r.status))
@@ -258,6 +281,8 @@ export default function App(): JSX.Element {
               shown={shownBoard.issues.length}
               total={board.issues.length}
               onChange={setFilters}
+              groupBy={groupBy}
+              onGroupBy={chooseGroupBy}
             />
             <Board
               board={shownBoard}
@@ -269,7 +294,9 @@ export default function App(): JSX.Element {
               onSelect={setSelectedIssue}
               onStart={(id, setName) => void start(id, setName)}
               setsFor={setsFor}
+              groupBy={groupBy}
               onUpdate={(id, update) => void updateIssue(id, update)}
+              onGlimpse={(id, tab) => setGlimpse({ id, tab: tab ?? 'ticket', at: Date.now() })}
             />
           </div>
           {(issue || run) && (
@@ -285,6 +312,7 @@ export default function App(): JSX.Element {
             onClose={() => setSelectedIssue(null)}
           />
           )}
+          {glimpseIssue && glimpse && <GlimpsePanel issue={glimpseIssue} tab={glimpse.tab} tabRequest={glimpse.at} onClose={() => setGlimpse(null)} />}
         </>
       )}
       {!logRun && view === 'agents' && (
@@ -322,6 +350,7 @@ export default function App(): JSX.Element {
           onShow={(id) => void chooseProject(id)}
         />
       )}
+      <UpdateBanner running={runningCount} />
     </div>
   )
 }
@@ -338,6 +367,10 @@ function applyLocally(issue: LinearIssue, u: IssueUpdate, board: BoardData): Lin
   if (u.priority !== undefined) next.priority = u.priority
   if (u.estimate !== undefined) next.estimate = u.estimate
   if (u.assigneeId !== undefined) next.assignee = board.team?.members.find((m) => m.id === u.assigneeId) ?? null
+  if (u.projectMilestoneId !== undefined) {
+    const m = board.team?.projects.flatMap((p) => p.milestones).find((x) => x.id === u.projectMilestoneId)
+    next.milestone = m ? { id: m.id, name: m.name } : null
+  }
   if (u.labelIds !== undefined) {
     const known = new Map([...(board.team?.labels ?? []), ...issue.labels].map((l) => [l.id, l]))
     next.labels = u.labelIds.map((id) => known.get(id)).filter((l): l is NonNullable<typeof l> => Boolean(l))

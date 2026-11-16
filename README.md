@@ -23,10 +23,10 @@ npm run dev
 
    ```
    npm install
-   npm run package
+   npm run dist
    ```
 
-   This makes `dist\Night Shift Setup <version>.exe`. It installs for your user only (no admin needed) and adds Start menu and desktop shortcuts. To run it without installing, use `npm run package:dir` and open `dist\win-unpacked\Night Shift.exe`, or skip packaging and use `npm run dev`.
+   This makes `dist\Night Shift Setup <version>.exe`. It's a one-click install for your user only (no admin needed) and adds Start menu and desktop shortcuts. It isn't code-signed yet, so SmartScreen asks first: choose **More info › Run anyway**. To run it without installing, use `npm run dist:dir` and open `dist\win-unpacked\Night Shift.exe`, or skip packaging and use `npm run dev`. Installed copies update themselves. Releases are published with `npm run release` (see [docs/releasing.md](docs/releasing.md)).
 3. On the first computer, **Settings › Export settings** saves `night-shift-settings.yml`. Copy it over and use **Settings › Import settings…**. It shows what's in the file (Linear, Repository, Worktrees, Runs, Projects, Automations); untick anything you don't want, then **Import selected**. Automations arrive switched off, so two machines don't run the same agents; turn on the ones this machine should run. If the repo path doesn't exist on the new machine, the local one is kept and you're told.
 4. Paste your Linear API key in Settings. It's never in the exported file; each machine stores its own, encrypted for that Windows user.
 

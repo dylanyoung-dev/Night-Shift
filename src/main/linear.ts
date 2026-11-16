@@ -1,4 +1,4 @@
-import type { IssueUpdate, LinearIssue, LinearProject, LinearPullRequest, LinearState, TeamMeta } from '../shared/types'
+import type { IssueDetail, IssueDocument, IssueUpdate, LinearIssue, LinearMilestone, LinearProject, LinearPullRequest, LinearState, TeamMeta } from '../shared/types'
 
 const ENDPOINT = 'https://api.linear.app/graphql'
 
@@ -40,7 +40,7 @@ const TSHIRT = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL']
 // The team's members, labels and estimate scale: what the card menus offer.
 // Two small queries: one combined query is over Linear's complexity limit.
 export async function fetchTeamMeta(apiKey: string, teamKey: string): Promise<TeamMeta | null> {
-  const [teamData, labelData] = await Promise.all([
+  const [teamData, labelData, milestoneData] = await Promise.all([
     gql<{
       teams: {
         nodes: {
@@ -49,7 +49,7 @@ export async function fetchTeamMeta(apiKey: string, teamKey: string): Promise<Te
           issueEstimationAllowZero: boolean
           issueEstimationExtended: boolean
           members: { nodes: { id: string; name: string; displayName: string; avatarUrl: string | null; active: boolean }[] }
-          projects: { nodes: LinearProject[] }
+          projects: { nodes: Omit<LinearProject, 'milestones'>[] }
         }[]
       }
     }>(
@@ -65,21 +65,28 @@ export async function fetchTeamMeta(apiKey: string, teamKey: string): Promise<Te
       }`,
       { key: teamKey }
     ),
-    gql<{ issueLabels: { nodes: { id: string; name: string; color: string; isGroup: boolean }[] } }>(
+    gql<{ issueLabels: { nodes: { id: string; name: string; color: string; isGroup: boolean; parent: { id: string } | null }[] } }>(
       apiKey,
       `query Labels($key: String!) {
         issueLabels(first: 250, filter: { or: [{ team: { key: { eq: $key } } }, { team: { null: true } }] }) {
-          nodes { id name color isGroup }
+          nodes { id name color isGroup parent { id } }
         }
       }`,
       { key: teamKey }
-    )
+    ),
+    // Separate and allowed to fail: nesting milestones in the projects query is "too complex" for Linear.
+    gql<{ projectMilestones: { nodes: (LinearMilestone & { project: { id: string } | null })[] } }>(
+      apiKey,
+      `query Milestones { projectMilestones(first: 250) { nodes { id name targetDate sortOrder project { id } } } }`,
+      {}
+    ).catch(() => ({ projectMilestones: { nodes: [] } }))
   ])
   const team = teamData.teams.nodes[0]
   if (!team) return null
   const zero = team.issueEstimationAllowZero
   const scale = ESTIMATE_SCALES[team.issueEstimationType]
   const values = scale ? [...(zero ? [0] : []), ...scale.base, ...(team.issueEstimationExtended ? scale.extended : [])] : []
+  const labels = labelData.issueLabels.nodes.filter((l) => !l.isGroup) // groups can't be put on an issue themselves
   return {
     id: team.id,
     estimates: values.map((v, i) => ({
@@ -90,10 +97,19 @@ export async function fetchTeamMeta(apiKey: string, teamKey: string): Promise<Te
       .filter((m) => m.active)
       .map((m) => ({ id: m.id, name: m.displayName || m.name, avatarUrl: m.avatarUrl }))
       .sort((a, b) => a.name.localeCompare(b.name)),
-    projects: [...team.projects.nodes].sort((a, b) => a.name.localeCompare(b.name)),
-    labels: labelData.issueLabels.nodes
-      .filter((l) => !l.isGroup) // groups can't be put on an issue themselves
-      .map((l) => ({ id: l.id, name: l.name, color: l.color }))
+    projects: team.projects.nodes
+      .map((p) => ({
+        ...p,
+        milestones: milestoneData.projectMilestones.nodes
+          .filter((m) => m.project?.id === p.id)
+          .map(({ project: _project, ...m }) => m)
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    labels: labels.map((l) => ({ id: l.id, name: l.name, color: l.color, groupId: l.parent?.id ?? null })).sort((a, b) => a.name.localeCompare(b.name)),
+    labelGroups: labelData.issueLabels.nodes
+      .filter((g) => g.isGroup && labels.some((l) => l.parent?.id === g.id))
+      .map((g) => ({ id: g.id, name: g.name, color: g.color }))
       .sort((a, b) => a.name.localeCompare(b.name))
   }
 }
@@ -105,6 +121,7 @@ const ISSUE_FIELDS = `
   assignee { id name displayName avatarUrl }
   parent { identifier title }
   project { id }
+  projectMilestone { id name }
   children(first: 50) { nodes { state { type } } }
   inverseRelations(first: 20) { nodes { type } }
   attachments(first: 10) { nodes { url title sourceType metadata } }
@@ -125,6 +142,7 @@ interface IssueNode {
   assignee: { id: string; name: string; displayName: string; avatarUrl: string | null } | null
   parent: { identifier: string; title: string } | null
   project: { id: string } | null
+  projectMilestone: { id: string; name: string } | null
   children: { nodes: { state: { type: string } }[] }
   inverseRelations: { nodes: { type: string }[] }
   attachments: { nodes: { url: string; title: string; sourceType: string | null; metadata: Record<string, unknown> | null }[] }
@@ -182,6 +200,7 @@ function toIssue(n: IssueNode): LinearIssue {
       : null,
     parent: n.parent,
     projectId: n.project?.id ?? null,
+    milestone: n.projectMilestone ? { id: n.projectMilestone.id, name: n.projectMilestone.name } : null,
     blocked: n.inverseRelations.nodes.some((r) => r.type === 'blocks'),
     subIssues: kids.length
       ? { done: kids.filter((k) => k.state.type === 'completed' || k.state.type === 'canceled').length, total: kids.length }
@@ -299,4 +318,119 @@ export async function removeLabelByName(apiKey: string, issueId: string, name: s
 
 export async function addComment(apiKey: string, issueId: string, body: string): Promise<void> {
   await gql(apiKey, `mutation Comment($input: CommentCreateInput!) { commentCreate(input: $input) { success } }`, { input: { issueId, body } })
+}
+
+const PERSON = 'name displayName avatarUrl'
+
+// The full ticket for the detail panel: description, properties, sub-issues, links and comments.
+export async function fetchIssueDetail(apiKey: string, issueId: string): Promise<IssueDetail> {
+  type Person = { id?: string; name: string; displayName: string; avatarUrl: string | null } | null
+  type St = { name: string; type: string; color: string }
+  const { issue: n } = await gql<{
+    issue: {
+      id: string; identifier: string; title: string; url: string; description: string | null
+      state: St; priority: number; estimate: number | null; dueDate: string | null; createdAt: string; updatedAt: string
+      assignee: Person; creator: Person
+      labels: { nodes: { id: string; name: string; color: string }[] }
+      project: { name: string; color: string } | null
+      projectMilestone: { name: string } | null
+      cycle: { number: number; name: string | null } | null
+      parent: { identifier: string; title: string; url: string } | null
+      children: { nodes: { identifier: string; title: string; url: string; state: St }[] }
+      attachments: { nodes: { title: string; subtitle: string | null; url: string }[] }
+      comments: { nodes: { id: string; body: string; createdAt: string; user: Person; botActor: { name: string | null } | null; parent: { id: string } | null }[] }
+    }
+  }>(
+    apiKey,
+    `query Detail($id: String!) {
+      issue(id: $id) {
+        id identifier title url description priority estimate dueDate createdAt updatedAt
+        state { name type color }
+        assignee { id ${PERSON} } creator { id ${PERSON} }
+        labels(first: 20) { nodes { id name color } }
+        project { name color } projectMilestone { name } cycle { number name }
+        parent { identifier title url }
+        children(first: 50) { nodes { identifier title url state { name type color } } }
+        attachments(first: 20) { nodes { title subtitle url } }
+        comments(first: 100) { nodes { id body createdAt user { id ${PERSON} } botActor { name } parent { id } } }
+      }
+    }`,
+    { id: issueId }
+  )
+  // Documents in their own query, so an error there still leaves the rest of the ticket.
+  let documents: IssueDocument[] = []
+  let documentsError: string | undefined
+  try {
+    const docs = await gql<{
+      issue: { documents: { nodes: { id: string; title: string; url: string; content: string | null; updatedAt: string; updatedBy: Person }[] } }
+    }>(
+      apiKey,
+      `query Docs($id: String!) { issue(id: $id) { documents(first: 10) { nodes { id title url content updatedAt updatedBy { ${PERSON} } } } } }`,
+      { id: issueId }
+    )
+    documents = docs.issue.documents.nodes.map((x) => ({
+      id: x.id,
+      title: x.title || 'Untitled',
+      url: x.url,
+      content: x.content ?? '',
+      updatedAt: x.updatedAt,
+      updatedBy: x.updatedBy ? x.updatedBy.displayName || x.updatedBy.name : null
+    }))
+  } catch (err) {
+    documentsError = (err as Error).message
+  }
+  const person = (p: Person): IssueDetail['assignee'] =>
+    p ? { id: p.id ?? '', name: p.displayName || p.name, avatarUrl: p.avatarUrl } : null
+  return {
+    id: n.id,
+    identifier: n.identifier,
+    title: n.title,
+    url: n.url,
+    description: n.description ?? '',
+    state: n.state,
+    priority: n.priority ?? 0,
+    estimate: n.estimate ?? null,
+    dueDate: n.dueDate,
+    createdAt: n.createdAt,
+    updatedAt: n.updatedAt,
+    assignee: person(n.assignee),
+    creator: person(n.creator),
+    labels: n.labels.nodes,
+    project: n.project,
+    milestone: n.projectMilestone,
+    cycle: n.cycle,
+    parent: n.parent,
+    children: n.children.nodes,
+    attachments: n.attachments.nodes,
+    comments: n.comments.nodes
+      .map((c) => ({
+        id: c.id,
+        body: c.body,
+        createdAt: c.createdAt,
+        author: c.user ? c.user.displayName || c.user.name : c.botActor?.name ?? 'Linear',
+        avatarUrl: c.user?.avatarUrl ?? null,
+        parentId: c.parent?.id ?? null
+      }))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    documents,
+    documentsError
+  }
+}
+
+// Images pasted into Linear live on uploads.linear.app and need the API key to load.
+const imageCache = new Map<string, string>()
+export async function fetchLinearImage(apiKey: string, url: string): Promise<string | null> {
+  if (!/^https:\/\/uploads\.linear\.app\//.test(url)) return null
+  const hit = imageCache.get(url)
+  if (hit) return hit
+  const res = await fetch(url, { headers: { Authorization: apiKey } })
+  if (!res.ok) return null
+  const type = res.headers.get('content-type') ?? 'image/png'
+  if (!type.startsWith('image/')) return null
+  const buf = Buffer.from(await res.arrayBuffer())
+  if (buf.length > 15_000_000) return null
+  const data = `data:${type};base64,${buf.toString('base64')}`
+  if (imageCache.size > 100) imageCache.delete(imageCache.keys().next().value as string)
+  imageCache.set(url, data)
+  return data
 }

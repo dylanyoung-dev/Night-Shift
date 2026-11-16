@@ -9,10 +9,13 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "package": "electron-vite build && electron-builder --win nsis",
-    "package:dir": "electron-vite build && electron-builder --win dir"
+    "dist": "electron-vite build && electron-builder --win --publish never",
+    "dist:dir": "electron-vite build && electron-builder --win dir --publish never",
+    "release": "node scripts/release.mjs",
+    "r2": "node scripts/r2.mjs"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "yaml": "^2.6.1"
   },
   "devDependencies": {
@@ -33,35 +36,5 @@
   "engines": {
     "node": ">=22"
   },
-  "build": {
-    "appId": "dev.nightshift.app",
-    "productName": "Night Shift",
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "out/**/*",
-      "package.json",
-      "resources/**"
-    ],
-    "win": {
-      "target": [
-        "nsis"
-      ],
-      "icon": "build/icon.ico"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "shortcutName": "Night Shift",
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico"
-    },
-    "icon": "build/icon.png",
-    "asarUnpack": [
-      "resources/**"
-    ]
-  }
+  "author": "Dylan Young"
 }

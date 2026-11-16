@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { BoardData, IssueUpdate, LinearIssue, StepChoice } from '../../../shared/types'
-import { Avatar, EstimateIcon, PRIORITY_LABEL, PriorityIcon, StatusIcon } from './LinearIcons'
+import { Avatar, DocIcon, EstimateIcon, GlimpseIcon, MilestoneIcon, PRIORITY_LABEL, PriorityIcon, StatusIcon } from './LinearIcons'
 
 // 'actions' is the right-click menu; 'run' lists the ticket's actions (sets of steps) to start.
-export type MenuMode = 'actions' | 'run' | 'status' | 'priority' | 'assignee' | 'labels' | 'estimate'
+export type MenuMode = 'actions' | 'run' | 'status' | 'priority' | 'assignee' | 'labels' | 'estimate' | 'milestone'
 
 interface Props {
   issue: LinearIssue
@@ -16,6 +16,7 @@ interface Props {
   runActions: StepChoice[] // the ticket's actions
   runBlocked?: string // why actions can't start now (e.g. a run is going)
   onRun(setName: string): void
+  onGlimpse(tab?: 'ticket' | 'spec'): void // show the ticket's details (or its spec) in a side panel
 }
 
 interface Option {
@@ -23,6 +24,9 @@ interface Option {
   label: string
   icon?: JSX.Element
   checked?: boolean
+  sub?: boolean // opens another list (shows the chevron)
+  divider?: boolean // horizontal line above it
+  note?: boolean // greyed text, not clickable
   run(): void
 }
 
@@ -34,7 +38,8 @@ const TITLES: Record<MenuMode, string> = {
   priority: 'Set priority',
   assignee: 'Assign to',
   labels: 'Labels',
-  estimate: 'Set estimate'
+  estimate: 'Set estimate',
+  milestone: 'Set milestone'
 }
 
 function PlayIcon(): JSX.Element {
@@ -46,7 +51,7 @@ function PlayIcon(): JSX.Element {
 }
 
 // A Linear-style command menu for one card. Every choice is sent to Linear by the caller.
-export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, onClose, runActions, runBlocked, onRun }: Props): JSX.Element {
+export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, onClose, runActions, runBlocked, onRun, onGlimpse }: Props): JSX.Element {
   const [filter, setFilter] = useState('')
   const [active, setActive] = useState(0)
   const [pos, setPos] = useState(at)
@@ -56,16 +61,26 @@ export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, on
   const states = board.allStates?.length ? board.allStates : board.states
   const labelIds = useMemo(() => new Set(issue.labels.map((l) => l.id)), [issue.labels])
 
+  const project = team?.projects.find((p) => p.id === issue.projectId)
+
   const options = useMemo<Option[]>(() => {
+    // Fixed options at the bottom of the card's Actions dropdown, under a line.
+    const statics = (): Option[] => [
+      { key: 'glimpse', label: 'Glimpse in Linear', icon: <GlimpseIcon />, divider: true, run: () => (onGlimpse('ticket'), onClose()) },
+      { key: 'spec', label: 'View spec', icon: <DocIcon />, run: () => (onGlimpse('spec'), onClose()) }
+    ]
     const pick = (update: IssueUpdate) => () => {
       onUpdate(update)
       onClose()
     }
     switch (mode) {
       case 'run':
-        return runBlocked
-          ? []
-          : runActions.map((a) => ({
+        return [
+          ...(runBlocked
+            ? [{ key: 'blocked', label: runBlocked, note: true, run: () => undefined }]
+            : !runActions.length
+              ? [{ key: 'none', label: `No actions for ${issue.stateName}`, note: true, run: () => undefined }]
+              : runActions.map((a) => ({
               key: a.name,
               label: a.label,
               icon: <PlayIcon />,
@@ -73,16 +88,32 @@ export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, on
                 onRun(a.name)
                 onClose()
               }
-            }))
+            }))),
+          ...statics()
+        ]
       case 'actions':
         return [
-          ...(runActions.length ? [{ key: 'run', label: 'Run an action', icon: <PlayIcon />, run: () => onMode('run') }] : []),
-          { key: 'status', label: 'Status', icon: <StatusIcon state={states.find((s) => s.id === issue.stateId) ?? states[0]} />, run: () => onMode('status') },
-          { key: 'priority', label: 'Priority', icon: <PriorityIcon priority={issue.priority} />, run: () => onMode('priority') },
-          { key: 'assignee', label: 'Assignee', icon: <Avatar person={issue.assignee} />, run: () => onMode('assignee') },
-          { key: 'labels', label: 'Labels', icon: <span className="dot" style={{ background: issue.labels[0]?.color ?? '#6e7681' }} />, run: () => onMode('labels') },
-          ...(team?.estimates.length ? [{ key: 'estimate', label: 'Estimate', icon: <EstimateIcon />, run: () => onMode('estimate') }] : []),
+          ...(runActions.length ? [{ key: 'run', label: 'Run an action', icon: <PlayIcon />, sub: true, run: () => onMode('run') }] : []),
+          { key: 'status', label: 'Status', icon: <StatusIcon state={states.find((s) => s.id === issue.stateId) ?? states[0]} />, sub: true, run: () => onMode('status') },
+          { key: 'priority', label: 'Priority', icon: <PriorityIcon priority={issue.priority} />, sub: true, run: () => onMode('priority') },
+          { key: 'assignee', label: 'Assignee', icon: <Avatar person={issue.assignee} />, sub: true, run: () => onMode('assignee') },
+          { key: 'labels', label: 'Labels', icon: <span className="dot" style={{ background: issue.labels[0]?.color ?? '#6e7681' }} />, sub: true, run: () => onMode('labels') },
+          ...(team?.estimates.length ? [{ key: 'estimate', label: 'Estimate', icon: <EstimateIcon />, sub: true, run: () => onMode('estimate') }] : []),
+          { key: 'milestone', label: 'Milestone', icon: <MilestoneIcon filled={Boolean(issue.milestone)} />, sub: true, run: () => onMode('milestone') },
           { key: 'linear', label: 'Open in Linear', run: () => (void window.nightShift.openInBrowser(issue.url), onClose()) }
+        ]
+      case 'milestone':
+        if (!project) return [{ key: 'noproject', label: 'Add this ticket to a project in Linear to give it a milestone.', note: true, run: () => undefined }]
+        if (!project.milestones.length) return [{ key: 'nomilestones', label: `${project.name} has no milestones yet. Add them in Linear.`, note: true, run: () => undefined }]
+        return [
+          { key: 'none', label: 'No milestone', icon: <MilestoneIcon filled={false} />, checked: !issue.milestone, run: issue.milestone ? pick({ projectMilestoneId: null }) : onClose },
+          ...project.milestones.map((m) => ({
+            key: m.id,
+            label: m.targetDate ? `${m.name} · ${new Date(`${m.targetDate}T12:00:00`).toLocaleDateString([], { month: 'short', day: 'numeric' })}` : m.name,
+            icon: <MilestoneIcon />,
+            checked: m.id === issue.milestone?.id,
+            run: m.id === issue.milestone?.id ? onClose : pick({ projectMilestoneId: m.id })
+          }))
         ]
       case 'status':
         return states.map((s) => ({
@@ -120,7 +151,10 @@ export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, on
           checked: labelIds.has(l.id),
           run: () =>
             onUpdate({
-              labelIds: labelIds.has(l.id) ? [...labelIds].filter((id) => id !== l.id) : [...labelIds, l.id]
+              // A group (Initiative, Area…) holds one label per ticket: picking one swaps out the other.
+              labelIds: labelIds.has(l.id)
+                ? [...labelIds].filter((id) => id !== l.id)
+                : [...[...labelIds].filter((id) => !l.groupId || team?.labels.find((t) => t.id === id)?.groupId !== l.groupId), l.id]
             })
         }))
       case 'estimate':
@@ -135,7 +169,7 @@ export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, on
           }))
         ]
     }
-  }, [mode, issue, states, team, labelIds, onMode, onUpdate, onClose, runActions, runBlocked, onRun])
+  }, [mode, issue, states, team, project, labelIds, onMode, onUpdate, onClose, runActions, runBlocked, onRun, onGlimpse])
 
   const shown = filter ? options.filter((o) => o.label.toLowerCase().includes(filter.toLowerCase())) : options
 
@@ -192,7 +226,7 @@ export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, on
   }, [onClose, shown, active, mode, filter])
 
   // Short lists don't need a filter box.
-  const searchable = mode !== 'actions' && !(mode === 'run' && runActions.length <= 6)
+  const searchable = mode !== 'actions' && !(mode === 'run' && runActions.length <= 6) && !(mode === 'milestone' && (project?.milestones.length ?? 0) <= 6)
 
   return (
     <div
@@ -222,7 +256,10 @@ export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, on
       )}
       <ul className="issue-menu-list" role="listbox" aria-multiselectable={mode === 'labels'}>
         {shown.map((o, i) => (
-          <li key={o.key} role="option" aria-selected={o.checked ?? false}>
+          <li key={o.key} role="option" aria-selected={o.checked ?? false} aria-disabled={o.note || undefined} className={o.divider && i > 0 ? 'divided' : undefined}>
+            {o.note ? (
+              <span className="issue-menu-note">{o.label}</span>
+            ) : (
             <button
               type="button"
               className={`issue-menu-item${i === active ? ' active' : ''}`}
@@ -231,17 +268,18 @@ export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, on
             >
               <span className="ico">{o.icon}</span>
               <span className="lbl">{o.label}</span>
-              {mode === 'actions' && o.key !== 'linear' && <span className="chev" aria-hidden="true">›</span>}
+              {o.sub && <span className="chev" aria-hidden="true">›</span>}
               {o.checked && (
                 <svg className="check" width="14" height="14" viewBox="0 0 14 14" aria-label="Current">
                   <path d="M3 7.3 L5.8 10 L11 4.4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               )}
             </button>
+            )}
           </li>
         ))}
         {!shown.length && (
-          <li className="issue-menu-empty">{mode === 'run' ? runBlocked ?? `No actions for ${issue.stateName}. Add one on the Actions page.` : 'No matches'}</li>
+          <li className="issue-menu-empty">No matches</li>
         )}
       </ul>
       {mode === 'labels' && <div className="issue-menu-foot">Changes save to Linear as you click</div>}

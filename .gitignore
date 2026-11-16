@@ -3,3 +3,7 @@ out/
 dist/
 *.log
 .DS_Store
+
+# Local secrets (R2 token for releases). Never commit.
+.env
+.env.*

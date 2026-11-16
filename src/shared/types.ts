@@ -126,6 +126,7 @@ export interface LinearIssue {
   assignee: LinearPerson | null
   parent: { identifier: string; title: string } | null
   projectId: string | null // Linear project, if any
+  milestone: { id: string; name: string } | null // the project milestone it belongs to
   blocked: boolean // another issue blocks this one
   subIssues: { done: number; total: number } | null
   pullRequests: LinearPullRequest[]
@@ -133,6 +134,14 @@ export interface LinearIssue {
 }
 
 export interface LinearLabel {
+  id: string
+  name: string
+  color: string
+  groupId?: string | null // the label group it belongs to (e.g. Initiative, Area), if any
+}
+
+// A Linear label group, such as Initiative or Area. The board filters and groups by these.
+export interface LabelGroup {
   id: string
   name: string
   color: string
@@ -150,6 +159,7 @@ export interface TeamMeta {
   estimates: { value: number; label: string }[] // empty when the team doesn't use estimates
   members: LinearPerson[]
   labels: LinearLabel[]
+  labelGroups?: LabelGroup[] // groups that have labels, sorted by name
   projects: LinearProject[] // the team's Linear projects, for linking Night Shift projects
 }
 
@@ -158,6 +168,14 @@ export interface LinearProject {
   name: string
   color: string
   state: string // planned | started | paused | completed | canceled | backlog
+  milestones: LinearMilestone[]
+}
+
+export interface LinearMilestone {
+  id: string
+  name: string
+  targetDate: string | null
+  sortOrder: number
 }
 
 // Fields the board can change. Sent to Linear as-is; null clears a field.
@@ -167,6 +185,7 @@ export interface IssueUpdate {
   assigneeId?: string | null
   labelIds?: string[]
   estimate?: number | null
+  projectMilestoneId?: string | null
 }
 
 export interface LinearPullRequest {
@@ -334,6 +353,71 @@ export interface UsageReport {
   byProject: UsageSlice[]
 }
 
+// Plan limits as /usage shows them, taken from Claude's own rate-limit reports.
+export interface PlanWindow {
+  utilization: number // 0..1
+  resetsAt?: number // ms
+  status?: string
+}
+export interface PlanLimits {
+  seenAt: number // when Claude reported these
+  source: 'run' | 'check'
+  windows: Record<string, PlanWindow> // five_hour, seven_day, seven_day_opus, …
+}
+
+// Everything the Linear detail panel shows for one ticket.
+export interface IssueDetail {
+  id: string
+  identifier: string
+  title: string
+  url: string
+  description: string // markdown
+  state: { name: string; type: string; color: string }
+  priority: number
+  estimate: number | null
+  dueDate: string | null
+  createdAt: string
+  updatedAt: string
+  assignee: LinearPerson | null
+  creator: LinearPerson | null
+  labels: LinearLabel[]
+  project: { name: string; color: string } | null
+  milestone: { name: string } | null
+  cycle: { number: number; name: string | null } | null
+  parent: { identifier: string; title: string; url: string } | null
+  children: { identifier: string; title: string; url: string; state: { name: string; type: string; color: string } }[]
+  attachments: { title: string; subtitle: string | null; url: string }[]
+  comments: IssueComment[]
+  documents: IssueDocument[] // Linear documents attached to the ticket, such as the Spec
+  documentsError?: string // why documents couldn't be read
+}
+export interface IssueDocument {
+  id: string
+  title: string
+  url: string
+  content: string // markdown
+  updatedAt: string
+  updatedBy: string | null
+}
+export interface IssueComment {
+  id: string
+  body: string
+  createdAt: string
+  author: string
+  avatarUrl: string | null
+  parentId: string | null
+}
+
+// Auto-update progress, from the main process.
+export interface UpdateState {
+  status: 'dev' | 'idle' | 'checking' | 'downloading' | 'ready' | 'error'
+  version: string // the version running now
+  available?: string // the version being downloaded or ready to install
+  percent?: number
+  checkedAt?: number
+  error?: string
+}
+
 export interface NightShiftApi {
   getSettings(): Promise<Settings>
   saveSettings(update: SettingsUpdate): Promise<Settings>
@@ -354,7 +438,15 @@ export interface NightShiftApi {
   readLog(runId: string): Promise<string>
   replyToRun(runId: string, text: string): Promise<{ ok: true } | { error: string }>
   finishRunStep(runId: string): Promise<{ ok: true } | { error: string }> // end the Claude session, carry on
+  getUpdateState?(): Promise<UpdateState>
+  onUpdateState?(cb: (s: UpdateState) => void): () => void
+  installUpdate?(): Promise<void> // restart now and install the downloaded update
+  getIssueDetail?(issueId: string): Promise<IssueDetail | { error: string }>
+  linearImage?(url: string): Promise<string | null> // data: URL for an image uploaded to Linear
   getUsage?(days: number, refresh?: boolean): Promise<UsageReport>
+  getLimits?(): Promise<PlanLimits | null>
+  checkLimits?(): Promise<PlanLimits | { error: string }>
+  onLimits?(cb: (l: PlanLimits) => void): () => void
   usageProgress?(): Promise<{ done: number; total: number; scanning: boolean }>
   continueRun?(runId: string, text: string): Promise<{ ok: true } | { error: string }> // reply to a finished run: resume its Claude session (optional: older preloads lack it)
   onOpenRun(cb: (runId: string) => void): () => void // a notification was clicked

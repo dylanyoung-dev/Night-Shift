@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_WORKTREE_PATH, type ImportGroupKey, type ImportPreview, type RepoBranches, type Settings } from '../../../shared/types'
+import { DEFAULT_WORKTREE_PATH, type ImportGroupKey, type ImportPreview, type RepoBranches, type Settings, type UpdateState } from '../../../shared/types'
 
 // Mirrors resolveWorktreePath in the main process, for the example under the field.
 function previewPath(template: string, repo: string): string {
@@ -24,7 +24,8 @@ const SECTIONS = [
   { id: 'repo', label: 'Repository' },
   { id: 'worktrees', label: 'Worktrees' },
   { id: 'runs', label: 'Runs' },
-  { id: 'sharing', label: 'Share settings' }
+  { id: 'sharing', label: 'Share settings' },
+  { id: 'about', label: 'About' }
 ]
 
 export default function SettingsView({ settings, onSaved }: Props): JSX.Element {
@@ -485,6 +486,15 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
             </div>
           </div>
         </section>
+        <section id="about" className="settings-section" aria-labelledby="about-title">
+          <div className="section-side">
+            <h2 id="about-title">About</h2>
+            <p className="section-intro">The version you&apos;re running and its updates.</p>
+          </div>
+          <div className="form">
+            <AboutVersion />
+          </div>
+        </section>
         </div>
         <nav className="settings-toc" aria-label="Settings sections">
           <div className="listlabel">On this page</div>
@@ -504,6 +514,45 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
             </a>
           ))}
         </nav>
+      </div>
+    </div>
+  )
+}
+
+function AboutVersion(): JSX.Element {
+  const [u, setU] = useState<UpdateState | null>(null)
+  useEffect(() => {
+    void window.nightShift.getUpdateState?.().then(setU)
+    return window.nightShift.onUpdateState?.(setU)
+  }, [])
+  const status = !u
+    ? ''
+    : u.status === 'dev'
+      ? 'Development build: updates are only checked in the installed app.'
+      : u.status === 'checking'
+        ? 'Checking for updates…'
+        : u.status === 'downloading'
+          ? `Downloading ${u.available ?? 'an update'}${u.percent ? ` (${u.percent}%)` : ''}…`
+          : u.status === 'ready'
+            ? `Version ${u.available} is ready. Restart to install it, or it installs when you quit.`
+            : u.status === 'error'
+              ? "Couldn't check for updates (offline?). It tries again in a few hours."
+              : u.checkedAt
+                ? `Up to date. Last checked ${new Date(u.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
+                : 'Up to date.'
+  return (
+    <div className="field wide">
+      Version
+      <div className="row-actions">
+        <span className="mono" style={{ fontSize: 13, color: 'var(--text)' }}>
+          {u ? u.version : 'Restart Night Shift to see the version.'}
+        </span>
+        <span className="note">{status}</span>
+        {u?.status === 'ready' && (
+          <button className="btn small primary" type="button" onClick={() => void window.nightShift.installUpdate?.()}>
+            Restart to update
+          </button>
+        )}
       </div>
     </div>
   )

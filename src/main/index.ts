@@ -3,18 +3,21 @@ import { basename, join } from 'path'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'fs'
 import type { BoardData, ImportGroupKey, IssueUpdate, LinearState, SettingsUpdate, StepSet } from '../shared/types'
 import { getLinearKey, getSettings, updateSettings } from './settings'
-import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, removeLabelByName, updateIssue } from './linear'
+import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, removeLabelByName, updateIssue, fetchIssueDetail, fetchLinearImage } from './linear'
 import { loadSteps, saveSteps, setForState, setsForState, starterSteps, STEPS_RELATIVE_PATH } from './steps'
 import { Runner } from './runner'
 import { getUsage, usageProgress } from './usage'
+import { checkLimits, getLimits, loadLimits, onLimitsChange } from './limits'
+import { installUpdateNow, startUpdater, updateState } from './updater'
+import { log } from './log'
 import { listBranches } from './git'
 import { combineGroups, exportSettings, readImportGroups } from './configFile'
 import { AutomationScheduler } from './automations'
 import appIcon from '../../resources/icon.png?asset'
 
 // Pin the data folder so dev runs and an installed copy share settings and run history,
-// whatever product name the installer uses.
-app.setPath('userData', join(app.getPath('appData'), 'night-shift'))
+// whatever product name the installer uses. NIGHTSHIFT_USER_DATA points a copy elsewhere (testing).
+app.setPath('userData', process.env.NIGHTSHIFT_USER_DATA || join(app.getPath('appData'), 'night-shift'))
 
 let win: BrowserWindow | null = null
 let board: BoardData = { states: [], issues: [], fetchedAt: null }
@@ -174,6 +177,11 @@ function cleanUpdate(u: IssueUpdate): IssueUpdate | string {
     if (u.estimate !== null && !board.team?.estimates.some((e) => e.value === u.estimate)) return "Estimate isn't on this team's scale"
     out.estimate = u.estimate
   }
+  if (u.projectMilestoneId !== undefined) {
+    const known = new Set(board.team?.projects.flatMap((p) => p.milestones.map((m) => m.id)))
+    if (u.projectMilestoneId !== null && !known.has(u.projectMilestoneId)) return 'Unknown milestone'
+    out.projectMilestoneId = u.projectMilestoneId
+  }
   return Object.keys(out).length ? out : 'Nothing to change'
 }
 
@@ -299,6 +307,21 @@ function registerIpc(): void {
     return { ok: true }
   })
   ipcMain.handle('board:refresh', () => refreshBoard())
+  ipcMain.handle('issue:detail', async (_e, issueId: string) => {
+    const key = getLinearKey()
+    if (!key) return { error: 'Add your Linear API key in Settings.' }
+    if (!board.issues.some((i) => i.id === issueId)) return { error: 'That ticket is no longer on the board.' }
+    try {
+      return await fetchIssueDetail(key, issueId)
+    } catch (err) {
+      return { error: `Linear: ${(err as Error).message}` }
+    }
+  })
+  ipcMain.handle('linear:image', async (_e, url: string) => {
+    const key = getLinearKey()
+    if (!key || typeof url !== 'string') return null
+    return fetchLinearImage(key, url).catch(() => null)
+  })
   ipcMain.handle('steps:get', () => loadSteps(getSettings().repoPath))
   ipcMain.handle('steps:save', (_e, sets: StepSet[]) => {
     if (!Array.isArray(sets)) return { error: 'Nothing to save.' }
@@ -320,6 +343,10 @@ function registerIpc(): void {
     return getUsage(Math.min(365, Math.max(1, Math.round(Number(days) || 30))), sessions, Boolean(refresh))
   })
   ipcMain.handle('usage:progress', () => usageProgress())
+  ipcMain.handle('limits:get', () => getLimits())
+  ipcMain.handle('update:state', () => updateState())
+  ipcMain.handle('update:install', () => installUpdateNow())
+  ipcMain.handle('limits:check', () => checkLimits(getSettings().repoPath))
   ipcMain.handle('runs:get', () => runner.list())
   ipcMain.handle('runs:start', (_e, issueId: string, setName?: string) => {
     const s = getSettings()
@@ -410,10 +437,14 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   // Windows only shows notifications for apps with an ID (matches the installer's appId).
-  if (process.platform === 'win32') app.setAppUserModelId('dev.nightshift.app')
+  if (process.platform === 'win32') app.setAppUserModelId('dev.dylanyoung.nightshift')
+  loadLimits(join(app.getPath('userData'), 'runs', 'logs'))
+  onLimitsChange((l) => send('limits', l))
   registerIpc()
   nativeTheme.themeSource = getSettings().theme
   createWindow()
+  log.info(`Night Shift ${app.getVersion()} started${app.isPackaged ? '' : ' (development)'}`)
+  startUpdater((st) => send('update', st))
   nativeTheme.on('updated', () => win?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0F1115' : '#F6F7F9'))
   void refreshBoard()
   schedulePolling()
@@ -427,3 +458,4 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+

@@ -1,0 +1,48 @@
+# Night Shift packaging. Build with `npm run dist`, release with `npm run release` (see docs/releasing.md).
+appId: dev.dylanyoung.nightshift
+productName: Night Shift
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+  - resources/**
+asarUnpack:
+  - resources/**
+
+icon: build/icon.png
+
+# No code signing yet: with no certificate configured, electron-builder skips signing and the
+# installer shows a SmartScreen warning the first time. Nothing here requires a signature.
+forceCodeSigning: false
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+  # Unsigned builds: don't ask the updater to check a publisher signature on downloads.
+  verifyUpdateCodeSignature: false
+
+nsis:
+  oneClick: true # one click, no wizard
+  perMachine: false # per-user install in %LOCALAPPDATA%\Programs, no admin prompt
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Night Shift
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  deleteAppDataOnUninstall: false # settings and run history survive reinstalls
+
+# The update feed built into the app (app-update.yml): the R2 bucket's custom domain on Cloudflare.
+# Uploading is done by scripts/release.mjs, not electron-builder.
+publish:
+  - provider: generic
+    url: https://nightshift-updates.dylanyoung.dev
+    # R2 answers one byte range per request, not several at once. Without this,
+    # differential (blockmap) downloads fail and every update falls back to the full installer.
+    useMultipleRangeRequest: false

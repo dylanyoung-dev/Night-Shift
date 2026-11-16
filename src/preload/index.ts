@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
-import type { AutomationStatus, BoardData, NightShiftApi, Run, Settings, SettingsUpdate } from '../shared/types'
+import type { AutomationStatus, BoardData, NightShiftApi, PlanLimits, UpdateState, Run, Settings, SettingsUpdate } from '../shared/types'
 
 function listen<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
   const handler = (_e: IpcRendererEvent, ...args: unknown[]): void => cb(...(args as T))
@@ -27,6 +27,14 @@ const api: NightShiftApi = {
   finishRunStep: (runId: string) => ipcRenderer.invoke('runs:finishStep', runId),
   continueRun: (runId: string, text: string) => ipcRenderer.invoke('runs:continue', runId, text),
   getUsage: (days: number, refresh?: boolean) => ipcRenderer.invoke('usage:get', days, refresh),
+  getUpdateState: () => ipcRenderer.invoke('update:state'),
+  onUpdateState: (cb) => listen<[UpdateState]>('update', cb),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  getIssueDetail: (issueId: string) => ipcRenderer.invoke('issue:detail', issueId),
+  linearImage: (url: string) => ipcRenderer.invoke('linear:image', url),
+  getLimits: () => ipcRenderer.invoke('limits:get'),
+  checkLimits: () => ipcRenderer.invoke('limits:check'),
+  onLimits: (cb) => listen<[PlanLimits]>('limits', cb),
   usageProgress: () => ipcRenderer.invoke('usage:progress'),
   onOpenRun: (cb) => listen<[string]>('open-run', cb),
   getAutomationStatus: () => ipcRenderer.invoke('automations:status'),

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { TokenCounts, UsageDay, UsageReport, UsageSlice } from '../../../shared/types'
+import type { PlanLimits, TokenCounts, UsageDay, UsageReport, UsageSlice } from '../../../shared/types'
 
 type Metric = 'all' | 'work' | 'output' | 'cacheRead' | 'messages'
 const METRICS: { id: Metric; label: string; hint: string }[] = [
@@ -38,6 +38,24 @@ export default function UsageView(): JSX.Element {
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [asTable, setAsTable] = useState(false)
+  const [limits, setLimits] = useState<PlanLimits | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [checkError, setCheckError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void api.getLimits?.().then(setLimits)
+    return api.onLimits?.(setLimits)
+  }, [])
+
+  async function checkNow(): Promise<void> {
+    if (!api.checkLimits) return
+    setChecking(true)
+    setCheckError(null)
+    const r = await api.checkLimits()
+    if ('error' in r) setCheckError(r.error)
+    else setLimits(r)
+    setChecking(false)
+  }
 
   async function load(refresh = false): Promise<void> {
     if (!api.getUsage) {
@@ -99,23 +117,22 @@ export default function UsageView(): JSX.Element {
       {report && (
         <>
           <div className="tiles">
-            <div className="tile hero">
-              <div className="tile-label">Current 5-hour window</div>
+            <PlanTile limits={limits} now={report.generatedAt} checking={checking} error={checkError} onCheck={api.checkLimits ? () => void checkNow() : undefined} />
+            <div className="tile">
+              <div className="tile-label">Tokens this 5-hour window</div>
               {w ? (
                 <>
                   <div className="tile-value">{fmt(total(w))}</div>
                   <div className="tile-sub">
-                    tokens · {w.messages} messages · {clock(w.start)}–{clock(w.end)}
+                    {w.messages} messages since {clock(w.start)} · about {fmt(w.perMinute)} a minute
                   </div>
                   <WindowBar start={w.start} end={w.end} now={report.generatedAt} />
-                  <div className="tile-sub">
-                    Resets at {clock(w.end)} · about {fmt(w.perMinute)} tokens a minute
-                  </div>
+                  <div className="tile-sub">This machine only. Window ends about {clock(w.end)}.</div>
                 </>
               ) : (
                 <>
                   <div className="tile-value">0</div>
-                  <div className="tile-sub">No Claude Code activity in the last 5 hours. A new window starts with your next message.</div>
+                  <div className="tile-sub">No Claude Code activity on this machine in the last 5 hours.</div>
                 </>
               )}
             </div>
@@ -155,10 +172,66 @@ export default function UsageView(): JSX.Element {
           </div>
 
           <p className="note usage-foot">
-            Read from {report.files} session files in {report.sources.join(', ') || 'no Claude folder found'}. Counts are tokens reported by Claude for each reply; your plan&apos;s limit percentages aren&apos;t in these logs, so check those with /usage in Claude Code. Updated {clock(report.generatedAt)}.
+            Read from {report.files} session files in {report.sources.join(', ') || 'no Claude folder found'}. Token counts are what Claude reported for each reply on this machine. Plan limits come from Claude itself, so they match /usage and include every device you use. Updated {clock(report.generatedAt)}.
           </p>
         </>
       )}
+    </div>
+  )
+}
+
+const WINDOW_NAMES: Record<string, string> = {
+  five_hour: 'Current session (5-hour)',
+  seven_day: 'Weekly, all models',
+  seven_day_opus: 'Weekly, Opus',
+  seven_day_sonnet: 'Weekly, Sonnet'
+}
+const windowName = (k: string): string => WINDOW_NAMES[k] ?? k.replace(/_/g, ' ')
+function resetLabel(t: number, now: number): string {
+  const sameDay = new Date(t).toDateString() === new Date(now).toDateString()
+  return sameDay ? clock(t) : new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+}
+
+function PlanTile({ limits, now, checking, error, onCheck }: { limits: PlanLimits | null; now: number; checking: boolean; error: string | null; onCheck?: () => void }): JSX.Element {
+  const order = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet']
+  const keys = limits ? Object.keys(limits.windows).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99)) : []
+  return (
+    <div className="tile hero plan">
+      <div className="tile-label">
+        Plan limits
+        {onCheck && (
+          <button className="btn small" type="button" onClick={onCheck} disabled={checking} title="Sends Claude one very short Haiku message to get fresh numbers">
+            {checking ? 'Checking…' : 'Check now'}
+          </button>
+        )}
+      </div>
+      {!limits && <div className="tile-sub">No numbers yet. They arrive with the next Night Shift run, or press Check now.</div>}
+      {keys.map((k) => {
+        const win = limits!.windows[k]
+        const reset = win.resetsAt !== undefined && win.resetsAt <= now
+        const pct = reset ? 0 : Math.round(win.utilization * 100)
+        return (
+          <div key={k} className="plan-row">
+            <div className="plan-row-head">
+              <span>{windowName(k)}</span>
+              <b>{reset ? '0%' : `${pct}%`} used</b>
+            </div>
+            <div className={`winbar${pct >= 90 ? ' bad' : pct >= 75 ? ' warn' : ''}`}>
+              <div style={{ width: `${pct}%` }} />
+            </div>
+            <div className="tile-sub">
+              {reset ? `Reset at ${resetLabel(win.resetsAt!, now)} since the last report` : win.resetsAt ? `Resets ${resetLabel(win.resetsAt, now)}` : ''}
+            </div>
+          </div>
+        )
+      })}
+      {limits && (
+        <div className="tile-sub">
+          As of {clock(limits.seenAt)}
+          {new Date(limits.seenAt).toDateString() !== new Date(now).toDateString() ? ` on ${new Date(limits.seenAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}` : ''}, {limits.source === 'check' ? 'from Check now' : 'from a Night Shift run'}
+        </div>
+      )}
+      {error && <div className="tile-sub err">{error}</div>}
     </div>
   )
 }

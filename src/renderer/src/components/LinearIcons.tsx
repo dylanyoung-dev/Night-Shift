@@ -187,3 +187,39 @@ export function Avatar({ person }: { person: { name: string; avatarUrl: string |
     </span>
   )
 }
+
+// Project milestone: a diamond, filled when the ticket has one.
+export function MilestoneIcon({ filled = true }: { filled?: boolean }): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <path d="M7 1.8 L12.2 7 L7 12.2 L1.8 7 Z" fill={filled ? 'currentColor' : 'none'} fillOpacity={filled ? 0.25 : 0} stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      {filled && <path d="M7 4.6 L9.4 7 L7 9.4 L4.6 7 Z" fill="currentColor" />}
+    </svg>
+  )
+}
+
+export function GlimpseIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="11" height="9" rx="2" fill="none" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M8 2.5 V11.5" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  )
+}
+
+export function ExternalIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <path d="M8 2.5 H11.5 V6 M11.5 2.5 L6.5 7.5 M10 8.5 V11.5 H2.5 V4 H5.5" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function DocIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <path d="M3.5 1.8 H8.4 L11 4.4 V12.2 H3.5 Z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M5.4 7 H9 M5.4 9.4 H9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  )
+}

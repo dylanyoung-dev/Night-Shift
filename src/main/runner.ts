@@ -7,6 +7,7 @@ import { CLAUDE_RUN_FLAGS, DEFAULT_WORKTREE_PATH, isActiveRun, resumableStep } f
 import type { LinearIssue, Run, RunStep, StepDef, StepSet, WorktreeMode } from '../shared/types'
 import { ClaudeStreamFormatter, needsYou, parseClaudeCommand } from './claudeStream'
 import { planAfterRun, type FailurePlan } from './failure'
+import { noteStreamOutput } from './limits'
 
 const TAIL_CHARS = 20000
 const AUTO_RERUN_HOURS = 12
@@ -388,6 +389,7 @@ export class Runner {
       child.stdout?.on('data', (d: Buffer) => {
         const text = d.toString()
         watchCutOff(text)
+        if (claude) noteStreamOutput(text) // plan limit percentages ride along in the stream
         // Keep the Claude session id so the run can be continued after it ends.
         const rs = a.run.steps[a.run.currentStep]
         if (claude && rs && !rs.sessionId) {
