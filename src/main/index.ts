@@ -8,6 +8,7 @@ import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetch
 import { globalSet, loadSteps, saveSteps, setForState, setsForState, starterSteps, STEPS_RELATIVE_PATH } from './steps'
 import { Runner } from './runner'
 import { getUsage, usageProgress } from './usage'
+import { getTicketStats } from './ticketStats'
 import { checkLimits, getLimits, loadLimits, onLimitsChange } from './limits'
 import { installUpdateNow, startUpdater, updateState } from './updater'
 import { log } from './log'
@@ -344,6 +345,16 @@ function registerIpc(): void {
     const sessions = new Set<string>()
     for (const r of runner.list()) for (const st of r.steps) if (st.sessionId) sessions.add(st.sessionId)
     return getUsage(Math.min(365, Math.max(1, Math.round(Number(days) || 30))), sessions, Boolean(refresh))
+  })
+  ipcMain.handle('usage:tickets', (_e, days: number) => {
+    const s = getSettings()
+    const project = s.projects.find((p) => p.id === s.activeProjectId) ?? null
+    return getTicketStats(Math.min(365, Math.max(1, Math.round(Number(days) || 30))), {
+      apiKey: getLinearKey() ?? '',
+      teamKey: s.linearTeamKey,
+      projectIds: project?.linearProjectIds,
+      runs: runner.list()
+    })
   })
   ipcMain.handle('usage:progress', () => usageProgress())
   ipcMain.handle('limits:get', () => getLimits())

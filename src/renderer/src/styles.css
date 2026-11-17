@@ -642,6 +642,7 @@ button.prop:disabled:hover { background: transparent; color: var(--text-2); }
 .tile-sub { font-size: 12px; color: var(--muted); }
 .winbar { height: 6px; border-radius: 3px; background: var(--line-2); overflow: hidden; margin: 4px 0 2px; }
 .winbar > div { height: 100%; background: var(--accent); border-radius: 3px; }
+.usage-section { margin: 20px 0 0; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .usage-card { border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel); padding: 14px 16px; margin-bottom: 12px; min-width: 0; }
 .usage-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 10px; }
 .usage-card-head h2 { margin: 0; font-size: 14px; font-weight: 600; }
@@ -653,6 +654,10 @@ button.prop:disabled:hover { background: transparent; color: var(--text-2); }
 .daychart .axis { fill: var(--muted); font-size: 11px; font-family: var(--font-mono); }
 .daychart .bar { fill: var(--accent); opacity: .85; }
 .daychart .bar.on { opacity: 1; }
+.daychart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.daychart .line-area { fill: var(--accent); opacity: 0.08; }
+.daychart .dot { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.daychart .crosshair { stroke: var(--line-3); stroke-width: 1; stroke-dasharray: 3 3; }
 .chart-tip { position: absolute; top: 0; width: 200px; pointer-events: none; background: var(--raised); border: 1px solid var(--line-3); border-radius: 8px; padding: 8px 10px; font-size: 12px; color: var(--text-2); box-shadow: 0 6px 20px rgba(0,0,0,.25); }
 .tip-head { font-weight: 600; color: var(--text); margin-bottom: 4px; }
 .tip-row { display: flex; justify-content: space-between; gap: 8px; }

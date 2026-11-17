@@ -28,6 +28,7 @@ const api: NightShiftApi = {
   finishRunStep: (runId: string) => ipcRenderer.invoke('runs:finishStep', runId),
   continueRun: (runId: string, text: string) => ipcRenderer.invoke('runs:continue', runId, text),
   getUsage: (days: number, refresh?: boolean) => ipcRenderer.invoke('usage:get', days, refresh),
+  getTicketStats: (days: number) => ipcRenderer.invoke('usage:tickets', days),
   getUpdateState: () => ipcRenderer.invoke('update:state'),
   onUpdateState: (cb) => listen<[UpdateState]>('update', cb),
   installUpdate: () => ipcRenderer.invoke('update:install'),

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import TicketStatsSection from './TicketStatsSection'
 import type { PlanLimits, TokenCounts, UsageDay, UsageReport, UsageSlice } from '../../../shared/types'
 
 type Metric = 'all' | 'work' | 'output' | 'cacheRead' | 'messages'
@@ -147,6 +148,10 @@ export default function UsageView(): JSX.Element {
             </div>
           </div>
 
+          <h2 className="usage-section">Tickets</h2>
+          <TicketStatsSection days={days} tick={report.generatedAt} />
+
+          <h2 className="usage-section">Tokens</h2>
           <section className="usage-card">
             <div className="usage-card-head">
               <h2>Usage over time</h2>

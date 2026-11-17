@@ -434,3 +434,36 @@ export async function fetchLinearImage(apiKey: string, url: string): Promise<str
   imageCache.set(url, data)
   return data
 }
+
+// Issues the team completed since a date (moved to a Done-type state), for the usage page.
+// Canceled issues aren't completed, so they don't count.
+export async function fetchCompleted(
+  apiKey: string,
+  teamKey: string,
+  since: Date,
+  projectIds?: string[]
+): Promise<{ id: string; identifier: string; title: string; completedAt: string; estimate: number | null }[]> {
+  if (projectIds?.length === 0) return []
+  const filter: Record<string, unknown> = { team: { key: { eq: teamKey } }, completedAt: { gte: since.toISOString() } }
+  if (projectIds) filter.project = { id: { in: projectIds } }
+  const out: { id: string; identifier: string; title: string; completedAt: string; estimate: number | null }[] = []
+  let after: string | null = null
+  for (let page = 0; page < 20; page++) {
+    const data: {
+      issues: { nodes: { id: string; identifier: string; title: string; completedAt: string | null; estimate: number | null }[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } }
+    } = await gql(
+      apiKey,
+      `query Completed($filter: IssueFilter!, $after: String) {
+        issues(filter: $filter, first: 100, after: $after) {
+          nodes { id identifier title completedAt estimate }
+          pageInfo { hasNextPage endCursor }
+        }
+      }`,
+      { filter, after }
+    )
+    for (const n of data.issues.nodes) if (n.completedAt) out.push({ ...n, completedAt: n.completedAt })
+    if (!data.issues.pageInfo.hasNextPage) break
+    after = data.issues.pageInfo.endCursor
+  }
+  return out
+}

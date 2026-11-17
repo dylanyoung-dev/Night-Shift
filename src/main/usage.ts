@@ -287,3 +287,20 @@ export async function getUsage(days: number, nightShiftSessions: Set<string>, re
     byProject: slices(byProject).slice(0, 12)
   }
 }
+
+// Token totals for the given Claude sessions (a transcript's file name is its session id).
+export async function sessionTotals(ids: Set<string>): Promise<Map<string, { tokens: number; output: number }>> {
+  await ensureScan(false)
+  const out = new Map<string, { tokens: number; output: number }>()
+  for (const [path, f] of Object.entries(loadCache().files)) {
+    const id = basename(path, '.jsonl')
+    if (!ids.has(id)) continue
+    const t = out.get(id) ?? { tokens: 0, output: 0 }
+    for (const r of f.recs) {
+      t.tokens += r[2] + r[3] + r[4] + r[5]
+      t.output += r[3]
+    }
+    out.set(id, t)
+  }
+  return out
+}

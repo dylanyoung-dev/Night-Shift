@@ -362,6 +362,47 @@ export interface UsageReport {
   byProject: UsageSlice[]
 }
 
+// Tickets completed in Linear, and what Night Shift's agents spent on them.
+export interface TicketDone {
+  identifier: string
+  title: string
+  completedAt: number
+  estimate: number | null
+  runs: number // Night Shift runs on this ticket
+  sessions: number // Claude sessions those runs started
+  tokens: number // all tokens in those sessions
+  output: number
+  agentMs: number // time the runs were going
+}
+// Tickets completed in one day or week. agented/tokens/runs/sessions cover the ones with Night Shift runs.
+export interface TicketBucket {
+  count: number
+  points: number
+  agented: number
+  tokens: number
+  runs: number
+  sessions: number
+}
+export interface TicketStats {
+  generatedAt: number
+  days: number
+  error?: string
+  today: number // completed since midnight
+  thisWeek: number // completed since Monday
+  lastWeek: number // the whole week before
+  daily: (TicketBucket & { date: string })[] // the chosen range, oldest first
+  weekly: (TicketBucket & { start: string })[] // weeks starting Monday, oldest first
+  tickets: TicketDone[] // the chosen range, newest first
+  // over the tickets in the range that had at least one Night Shift run
+  withAgents: number
+  avgTokens: number
+  avgOutput: number
+  avgRuns: number
+  avgSessions: number
+  avgAgentMs: number
+  tokensPerPoint: number | null
+}
+
 // Plan limits as /usage shows them, taken from Claude's own rate-limit reports.
 export interface PlanWindow {
   utilization: number // 0..1
@@ -454,6 +495,7 @@ export interface NightShiftApi {
   getIssueDetail?(issueId: string): Promise<IssueDetail | { error: string }>
   linearImage?(url: string): Promise<string | null> // data: URL for an image uploaded to Linear
   getUsage?(days: number, refresh?: boolean): Promise<UsageReport>
+  getTicketStats?(days: number): Promise<TicketStats>
   getLimits?(): Promise<PlanLimits | null>
   checkLimits?(): Promise<PlanLimits | { error: string }>
   onLimits?(cb: (l: PlanLimits) => void): () => void
