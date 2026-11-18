@@ -83,6 +83,26 @@ export function orderStates<T extends { name: string }>(states: T[], order: stri
   return out
 }
 
+// This machine as a host for remote Night Shifts, over Tailscale. Per machine; never exported.
+export interface HostSettings {
+  enabled: boolean
+  name: string // shown to remotes; empty = the Tailscale machine name
+  port: number
+  allowedLogins: string[] // extra Tailscale logins allowed; this machine's own Tailscale user always is
+}
+export const DEFAULT_HOST_PORT = 47615
+
+export interface HostStatus {
+  state: 'off' | 'waiting' | 'listening' | 'error' // waiting: for Tailscale to come up
+  name?: string
+  dnsName?: string // MagicDNS name, e.g. dylandesktop.tail1a8202.ts.net
+  login?: string // the Tailscale user this machine is signed in as
+  addresses: string[] // the Tailscale addresses it listens on
+  port: number
+  error?: string
+  lastCaller?: { device: string; at: number }
+}
+
 export interface Settings {
   linearTeamKey: string // e.g. "IGN"
   repoPath: string // local checkout of the repo agents work in
@@ -97,6 +117,7 @@ export interface Settings {
   activeProjectId: string | null // null = every ticket in the team
   automations: Automation[]
   theme: 'system' | 'dark' | 'light' // this machine only; not in the exported file
+  host: HostSettings // this machine only; not in the exported file
   hasLinearKey: boolean // the key itself never leaves the main process
 }
 
@@ -497,6 +518,8 @@ export interface NightShiftApi {
   readLog(runId: string): Promise<string>
   replyToRun(runId: string, text: string): Promise<{ ok: true } | { error: string }>
   finishRunStep(runId: string): Promise<{ ok: true } | { error: string }> // end the Claude session, carry on
+  getHostStatus?(): Promise<HostStatus>
+  onHostStatus?(cb: (s: HostStatus) => void): () => void
   getUpdateState?(): Promise<UpdateState>
   onUpdateState?(cb: (s: UpdateState) => void): () => void
   installUpdate?(): Promise<void> // restart now and install the downloaded update

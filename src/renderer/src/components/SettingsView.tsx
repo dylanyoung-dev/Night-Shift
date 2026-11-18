@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_WORKTREE_PATH, type ImportGroupKey, type ImportPreview, type RepoBranches, type Settings, type UpdateState } from '../../../shared/types'
+import { DEFAULT_HOST_PORT, DEFAULT_WORKTREE_PATH, type HostSettings, type HostStatus, type ImportGroupKey, type ImportPreview, type RepoBranches, type Settings, type UpdateState } from '../../../shared/types'
 
 // Mirrors resolveWorktreePath in the main process, for the example under the field.
 function previewPath(template: string, repo: string): string {
@@ -24,6 +24,7 @@ const SECTIONS = [
   { id: 'repo', label: 'Repository' },
   { id: 'worktrees', label: 'Worktrees' },
   { id: 'runs', label: 'Runs' },
+  { id: 'host', label: 'Host' },
   { id: 'sharing', label: 'Share settings' },
   { id: 'about', label: 'About' }
 ]
@@ -88,6 +89,20 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
   const baseKnown = branchNames.includes(form.baseBranch)
   const baseOnOrigin = repo?.branches.some((b) => b.name === form.baseBranch && b.remote) ?? false
 
+  // Host: status comes live from the main process; the settings apply on Save.
+  const [hostStatus, setHostStatus] = useState<HostStatus | null>(null)
+  const [hostLogins, setHostLogins] = useState(settings.host.allowedLogins.join(', '))
+  const [hostCopied, setHostCopied] = useState(false)
+  const [dirtyHost, setDirtyHost] = useState(false)
+  useEffect(() => {
+    void window.nightShift.getHostStatus?.().then(setHostStatus)
+    return window.nightShift.onHostStatus?.(setHostStatus)
+  }, [])
+  function setHost(patch: Partial<HostSettings>): void {
+    set('host', { ...form.host, ...patch })
+    setDirtyHost(true)
+  }
+
   function set<K extends keyof Settings>(key: K, value: Settings[K]): void {
     setForm((f) => ({ ...f, [key]: value }))
     setSaved(false)
@@ -100,6 +115,8 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
     const s = await window.nightShift.saveSettings({ ...rest, ...(apiKey ? { linearApiKey: apiKey } : {}) })
     setApiKey('')
     setForm({ ...s })
+    setHostLogins(s.host.allowedLogins.join(', '))
+    setDirtyHost(false)
     onSaved(s)
     setSaved(true)
     setDirty(false)
@@ -423,6 +440,87 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
                 onChange={(e) => set('maxConcurrent', Number(e.target.value) || 1)}
               />
             </label>
+          </div>
+        </section>
+        <section id="host" className="settings-section" aria-labelledby="host-title">
+          <div className="section-side">
+            <h2 id="host-title">Host</h2>
+            <p className="section-intro">
+              Let Night Shift on your other devices use this machine over Tailscale. Only devices signed in to Tailscale as you can connect.
+            </p>
+          </div>
+          <div className="form">
+            <label className="check-row field wide">
+              <input type="checkbox" checked={form.host.enabled} onChange={(e) => setHost({ enabled: e.target.checked })} />
+              <span>
+                <strong>This machine is the host</strong>
+                <span className="sub">Listens on this machine's Tailscale address only, never on your local network or the internet.</span>
+              </span>
+            </label>
+            <label className="field">
+              Host name
+              <input
+                className="input"
+                value={form.host.name}
+                placeholder={hostStatus?.name || 'Tailscale machine name'}
+                onChange={(e) => setHost({ name: e.target.value })}
+              />
+            </label>
+            <label className="field">
+              Port
+              <input
+                className="input"
+                type="number"
+                min={1024}
+                max={65535}
+                value={form.host.port}
+                onChange={(e) => setHost({ port: Number(e.target.value) || DEFAULT_HOST_PORT })}
+              />
+            </label>
+            <label className="field wide">
+              Also allow these Tailscale logins (optional)
+              <input
+                className="input"
+                value={hostLogins}
+                placeholder="name@example.com, …"
+                onChange={(e) => {
+                  setHostLogins(e.target.value)
+                  setHost({ allowedLogins: e.target.value.split(/[\s,;]+/).filter(Boolean) })
+                }}
+              />
+              <span className="note">
+                {hostStatus?.login ? `Devices signed in as ${hostStatus.login} are always allowed.` : 'Devices signed in to Tailscale as you are always allowed.'}
+              </span>
+            </label>
+            <div className="field wide" role="status">
+              <span>
+                {!hostStatus || hostStatus.state === 'off'
+                  ? 'Off.'
+                  : hostStatus.state === 'listening'
+                    ? `Listening on ${hostStatus.addresses.map((a) => (a.includes(':') ? `[${a}]` : a) + `:${hostStatus.port}`).join(' and ')}.`
+                    : hostStatus.state === 'waiting'
+                      ? `Waiting for Tailscale: ${hostStatus.error ?? ''}. Trying again every 15 seconds.`
+                      : `Not listening: ${hostStatus.error ?? 'unknown error'}.`}
+                {hostStatus?.lastCaller && ` Last request from ${hostStatus.lastCaller.device} at ${new Date(hostStatus.lastCaller.at).toLocaleTimeString()}.`}
+              </span>
+              {hostStatus?.state === 'listening' && hostStatus.dnsName && (
+                <div className="inputrow">
+                  <span className="mono">{`${hostStatus.dnsName}:${hostStatus.port}`}</span>
+                  <button
+                    className="btn small"
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(`${hostStatus.dnsName}:${hostStatus.port}`)
+                      setHostCopied(true)
+                      window.setTimeout(() => setHostCopied(false), 1500)
+                    }}
+                  >
+                    {hostCopied ? 'Copied' : 'Copy connection'}
+                  </button>
+                </div>
+              )}
+              {dirtyHost && <span className="note">Save settings to apply host changes.</span>}
+            </div>
           </div>
         </section>
         <section id="sharing" className="settings-section" aria-labelledby="sharing-title">

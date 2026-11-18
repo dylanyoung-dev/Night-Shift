@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
-import type { AutomationStatus, BoardData, NightShiftApi, PlanLimits, UpdateState, Run, Settings, SettingsUpdate } from '../shared/types'
+import type { AutomationStatus, BoardData, HostStatus, NightShiftApi, PlanLimits, UpdateState, Run, Settings, SettingsUpdate } from '../shared/types'
 
 function listen<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
   const handler = (_e: IpcRendererEvent, ...args: unknown[]): void => cb(...(args as T))
@@ -29,6 +29,8 @@ const api: NightShiftApi = {
   continueRun: (runId: string, text: string) => ipcRenderer.invoke('runs:continue', runId, text),
   getUsage: (days: number, refresh?: boolean) => ipcRenderer.invoke('usage:get', days, refresh),
   getTicketStats: (days: number) => ipcRenderer.invoke('usage:tickets', days),
+  getHostStatus: () => ipcRenderer.invoke('host:status'),
+  onHostStatus: (cb) => listen<[HostStatus]>('host', cb),
   getUpdateState: () => ipcRenderer.invoke('update:state'),
   onUpdateState: (cb) => listen<[UpdateState]>('update', cb),
   installUpdate: () => ipcRenderer.invoke('update:install'),

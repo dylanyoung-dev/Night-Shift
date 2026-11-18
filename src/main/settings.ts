@@ -2,7 +2,7 @@ import { app, safeStorage } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import { DEFAULT_WORKTREE_PATH, type Automation, type NightShiftProject, type Settings, type SettingsUpdate } from '../shared/types'
+import { DEFAULT_HOST_PORT, DEFAULT_WORKTREE_PATH, type Automation, type HostSettings, type NightShiftProject, type Settings, type SettingsUpdate } from '../shared/types'
 
 interface Stored extends Omit<Settings, 'hasLinearKey'> {
   linearApiKeyEnc?: string // encrypted with the OS keychain (safeStorage), base64
@@ -22,7 +22,8 @@ const defaults: Stored = {
   projects: [],
   activeProjectId: null,
   automations: [],
-  theme: 'system'
+  theme: 'system',
+  host: { enabled: false, name: '', port: DEFAULT_HOST_PORT, allowedLogins: [] }
 }
 
 let cache: Stored | null = null
@@ -126,6 +127,19 @@ export function cleanAutomations(raw: unknown, projects: NightShiftProject[]): A
   return out
 }
 
+function cleanHost(raw: unknown): HostSettings {
+  const h = (raw && typeof raw === 'object' ? raw : {}) as Partial<HostSettings>
+  const port = Number(h.port)
+  return {
+    enabled: h.enabled === true,
+    name: String(h.name ?? '').trim().slice(0, 60),
+    port: Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : DEFAULT_HOST_PORT,
+    allowedLogins: Array.isArray(h.allowedLogins)
+      ? [...new Set(h.allowedLogins.map((l) => String(l).trim().toLowerCase()).filter((l) => /^[^\s@]+@[^\s@]+$/.test(l)))]
+      : []
+  }
+}
+
 export function updateSettings(update: SettingsUpdate): Settings {
   const s = { ...load() }
   const { linearApiKey, ...rest } = update
@@ -135,6 +149,7 @@ export function updateSettings(update: SettingsUpdate): Settings {
   if (s.activeProjectId && !s.projects.some((p) => p.id === s.activeProjectId)) s.activeProjectId = null
   s.automations = cleanAutomations(s.automations, s.projects)
   if (s.theme !== 'dark' && s.theme !== 'light') s.theme = 'system'
+  s.host = cleanHost(s.host)
   s.columnOrder = Array.isArray(s.columnOrder) ? [...new Set(s.columnOrder.map(String).filter(Boolean))] : []
   if (linearApiKey !== undefined) {
     delete s.linearApiKeyEnc

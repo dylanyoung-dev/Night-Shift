@@ -12,6 +12,7 @@ import { getTicketStats } from './ticketStats'
 import { checkLimits, getLimits, loadLimits, onLimitsChange } from './limits'
 import { installUpdateNow, startUpdater, updateState } from './updater'
 import { log } from './log'
+import { HostServer } from './hostServer'
 import { listBranches } from './git'
 import { combineGroups, exportSettings, readImportGroups } from './configFile'
 import { AutomationScheduler } from './automations'
@@ -81,6 +82,12 @@ function queueTicketSync(ticket: string | null): void {
     for (const t of tickets) await syncIssue(key, t).catch((err: Error) => console.warn(`Linear sync of ${t}: ${err.message}`))
   }, 1500)
 }
+
+// Serves remote Night Shifts over Tailscale when Settings › Host is on.
+const host = new HostServer(
+  () => getSettings().host,
+  (st) => send('host', st)
+)
 
 const runner = new Runner({
   getRepoPath: () => getSettings().repoPath,
@@ -277,9 +284,11 @@ function registerIpc(): void {
     }
     schedulePolling()
     void refreshBoard()
+    void host.apply()
     send('automations', scheduler.view())
     return s
   })
+  ipcMain.handle('host:status', () => host.view())
   ipcMain.handle('automations:status', () => scheduler.view())
   ipcMain.handle('automations:runNow', (_e, id: string) => scheduler.runNow(id))
   ipcMain.handle('settings:export', async () => {
@@ -534,6 +543,7 @@ app.whenReady().then(() => {
   nativeTheme.on('updated', () => win?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0C1024' : '#F5F0E3'))
   // A fresh board from the last session is used as is; an older one shows while the new one loads.
   if (!loadBoardCache()) void refreshBoard()
+  void host.apply()
   schedulePolling()
   // Schedules are checked every 30s; watch automations also check after each Linear sync.
   setInterval(() => void scheduler.tick(), 30_000)
