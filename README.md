@@ -1,4 +1,4 @@
-<img src="build/icon.svg" width="96" height="96" alt="Night Shift logo: a crescent moon holding a terminal prompt">
+<img src="build/icon.svg" width="96" height="96" alt="Night Shift logo: a gear with a crescent moon in its hub">
 
 # Night-Shift
 Project Night Shift a tool to help me run/manage my Agentic Software Factory.
@@ -56,7 +56,7 @@ The filter bar above the board narrows what's shown by ID or title, assignee, la
 
 The **Automations** page schedules agent runs. Each automation picks tickets from a project and one or more Linear states, and runs the action set up for each state (states without an action can't be picked). Two kinds:
 
-- **Watch for tickets**: checks on every Linear sync and picks tickets up as they arrive, at any time or within set days and hours. Per ticket: once each time it arrives in the state, or any number of times with a cooldown. A limit on how many of its runs go at once keeps it from queuing a whole column.
+- **Watch for tickets**: checks Linear on the interval set in Settings and picks tickets up as they arrive, at any time or within set days and hours. Per ticket: once each time it arrives in the state, or any number of times with a cooldown. A limit on how many of its runs go at once keeps it from queuing a whole column.
 - **On a schedule**: fires every N minutes within set days and hours, starting up to N tickets each time (highest priority first). It can stop after a set number of runs and switch itself off. With **Only run when the state has tickets**, an empty state doesn't use up a run; it checks again in a minute.
 
 New automations start switched off. **Run now** checks straight away, ignoring the schedule and hours. All runs share the max-local-runs limit in Settings, and Run history shows which automation started each run.

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { globalRunKey, isActiveRun, orderStates, setLabel, type BoardData, type IssueUpdate, type LinearIssue, type Run, type Settings, type StepChoice, type StepsFile } from '../../shared/types'
 import Sidebar, { View } from './components/Sidebar'
-import Board from './components/Board'
+import Board, { clearRelationsCache } from './components/Board'
 import RunPanel from './components/RunPanel'
 import LogView from './components/LogView'
 import StepsView from './components/StepsView'
@@ -17,6 +17,18 @@ import BranchPicker from './components/BranchPicker'
 
 const api = window.nightShift
 
+// Two arrows chasing each other round a circle.
+function RefreshIcon(): JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M13.5 6.5A5.5 5.5 0 0 0 3.2 4.6" />
+      <path d="M2.5 1.8v3.2h3.2" />
+      <path d="M2.5 9.5a5.5 5.5 0 0 0 10.3 1.9" />
+      <path d="M13.5 14.2V11h-3.2" />
+    </svg>
+  )
+}
+
 export default function App(): JSX.Element {
   const [view, setView] = useState<View>('board')
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -26,6 +38,17 @@ export default function App(): JSX.Element {
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null)
   const [glimpse, setGlimpse] = useState<{ id: string; tab: 'ticket' | 'spec'; at: number } | null>(null) // ticket shown in the Linear panel
   const [message, setMessage] = useState<string | null>(null)
+  const [reloading, setReloading] = useState(false) // the refresh button was pressed: the board is locked until Linear answers
+  // Skips every cache: the board's, and the relations loaded on cards.
+  const reloadBoard = async (): Promise<void> => {
+    setReloading(true)
+    clearRelationsCache()
+    try {
+      setBoard(await api.refreshBoard())
+    } finally {
+      setReloading(false)
+    }
+  }
   // Log screens opened on top of the current view, newest last. Back goes to the one before,
   // then to the view underneath (board, Agents, Run history…).
   const [logStack, setLogStack] = useState<string[]>([])
@@ -258,15 +281,22 @@ export default function App(): JSX.Element {
                 </button>
               )}
               <span className="status">
-                <span className="dot" style={{ background: runningCount ? '#3fb950' : '#3a3f4b' }} />
+                <span className="dot" style={{ background: runningCount ? 'var(--ok)' : 'var(--idle)' }} />
                 Local {runningCount} of {settings?.maxConcurrent ?? 0} running{queuedCount ? ` · ${queuedCount} queued` : ''}
               </span>
               <span className="status">
                 {board.fetchedAt ? `Synced ${new Date(board.fetchedAt).toLocaleTimeString()}` : 'Not synced yet'}
               </span>
               <div className="right">
-                <button className="btn" type="button" onClick={() => void api.refreshBoard()}>
-                  Sync Linear
+                <button
+                  className={`btn icon-only${reloading ? ' spinning' : ''}`}
+                  type="button"
+                  disabled={reloading}
+                  aria-label="Reload the board from Linear"
+                  title={`Reload the board from Linear${board.fetchedAt ? ` · last synced ${new Date(board.fetchedAt).toLocaleTimeString()}` : ''}`}
+                  onClick={() => void reloadBoard()}
+                >
+                  <RefreshIcon />
                 </button>
                 <span className="start-run" ref={startMenuRef}>
                   <button
@@ -319,6 +349,7 @@ export default function App(): JSX.Element {
               groupBy={groupBy}
               onGroupBy={chooseGroupBy}
             />
+            <div className="board-area" aria-busy={reloading}>
             <Board
               board={shownBoard}
               latestRun={latestRun}
@@ -333,6 +364,13 @@ export default function App(): JSX.Element {
               onUpdate={(id, update) => void updateIssue(id, update)}
               onGlimpse={(id, tab) => setGlimpse({ id, tab: tab ?? 'ticket', at: Date.now() })}
             />
+            {reloading && (
+              <div className="board-lock" role="status">
+                <span className="spinner" aria-hidden="true" />
+                Reloading from Linear…
+              </div>
+            )}
+            </div>
           </div>
           {(issue || run) && (
           <RunPanel

@@ -1,36 +1,36 @@
 :root {
   /* Theme colours: dark by default; light when the system (or Settings › Appearance) says so. */
-  --bg: #0f1115;
-  --panel: #12151b;
-  --card: #171a21;
-  --menu: #1a1d25;
-  --card-hover: #151821;
-  --card-sel: #1b2130;
-  --well: #0b0d11;
-  --raised: #1e222b;
-  --raised-hover: #252a34;
-  --hover: #181b22;
-  --hover-2: #262b36;
-  --agent-bg: #11141a;
-  --line: #20242c;
-  --line-2: #262a33;
-  --line-3: #333845;
-  --input-line: #2a2f3a;
-  --line-hover: #3a4050;
-  --text: #e6e8ec;
-  --text-2: #c5cad3;
-  --muted: #9ba1ad;
-  --text-strong: #ffffff;
-  --accent: #8fb0ff;
-  --accent-line: #5b8cff;
-  --link-hover: #b8ccff;
-  --on-accent: #0f1115;
-  --accent-soft-line: #2b3a5c;
-  --sel-bg: #1a2030;
+  --bg: #0c1024;
+  --panel: #0f142b;
+  --card: #141a36;
+  --menu: #171e3e;
+  --card-hover: #121833;
+  --card-sel: #1d2346;
+  --well: #090c1c;
+  --raised: #1a2144;
+  --raised-hover: #222a52;
+  --hover: #151b38;
+  --hover-2: #242c55;
+  --agent-bg: #0e1329;
+  --line: #1c2345;
+  --line-2: #232b50;
+  --line-3: #313a66;
+  --input-line: #2a3259;
+  --line-hover: #3d477a;
+  --text: #eee8d8;
+  --text-2: #cdc6b3;
+  --muted: #9ca1bd;
+  --text-strong: #fffaf0;
+  --accent: #ffb547;
+  --accent-line: #f0a23a;
+  --link-hover: #ffcd80;
+  --on-accent: #121833;
+  --accent-soft-line: #5a4824;
+  --sel-bg: #25233f;
   --ok: #3fb950;
   --warn: #d29922;
   --bad: #f85149;
-  --idle: #3a3f4b;
+  --idle: #363e66;
   --warn-text: #f2c46d;
   --warn-bg: #2a1d10;
   --warn-line: #5a3a1a;
@@ -40,42 +40,42 @@
   --attn-bg: #2a1b0c;
   --attn-bg-hover: #3a250f;
   --attn-bg-2: #1f160d;
-  --type-script-bg: #1f2a3d;
-  --type-script: #a9c1ff;
-  --type-claude-bg: #3a2e1a;
-  --type-linear-bg: #2a2140;
-  --type-linear: #c9b3ff;
+  --type-script-bg: #1d2750;
+  --type-script: #a9bfff;
+  --type-claude-bg: #3a2f1c;
+  --type-linear-bg: #2a2350;
+  --type-linear: #c9b8ff;
   --danger-text: #ff9b94;
   --danger-bg: #3a1d1d;
   --danger-line: #7a2e2e;
   --ok-bg: #13261a;
   --ok-line: #2f6b3b;
   --ok-text: #7ee2a0;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .25);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, .5);
-  --drop-bg: rgba(91, 140, 255, .08);
+  --shadow-sm: 0 1px 2px rgba(4, 6, 18, .35);
+  --shadow-lg: 0 12px 32px rgba(4, 6, 18, .6);
+  --drop-bg: rgba(255, 181, 71, .08);
   --font-mono: 'Cascadia Code', 'Cascadia Mono', 'JetBrains Mono', Consolas, 'Courier New', monospace;
-  --running: #e3b341;
-  --running-glow: rgba(227, 179, 65, .18);
+  --running: #ffb547;
+  --running-glow: rgba(255, 181, 71, .18);
   --failed: #f85149;
   --failed-glow: rgba(248, 81, 73, .16);
   /* log syntax colours */
-  --syn-text: #d4d8df;
-  --syn-out: #8b919c;
-  --syn-gutter: #3d4350;
-  --syn-step: #8fb0ff;
+  --syn-text: #e4dfd2;
+  --syn-out: #8d92ad;
+  --syn-gutter: #3a4270;
+  --syn-step: #ffb547;
   --syn-prompt: #3fb950;
   --syn-prog: #79c0ff;
   --syn-flag: #d2a8ff;
   --syn-str: #a5d6a7;
   --syn-op: #ff7b72;
   --syn-var: #ffa657;
-  --syn-code: #e6c07b;
-  --syn-code-bg: rgba(230, 192, 123, .08);
+  --syn-code: #f2d49a;
+  --syn-code-bg: rgba(242, 230, 201, .07);
   --syn-path: #7ee0d0;
   --syn-url: #79c0ff;
   --syn-id: #c9b3ff;
-  --syn-tool: #9ba1ad;
+  --syn-tool: #9ca1bd;
   --syn-tool-shell: #3fb950;
   --syn-tool-file: #79c0ff;
   --syn-tool-linear: #c9b3ff;
@@ -89,37 +89,37 @@
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #f6f7f9;
-    --panel: #ffffff;
-    --card: #ffffff;
-    --menu: #ffffff;
-    --card-hover: #f7f8fb;
-    --card-sel: #edf2ff;
-    --well: #f2f3f6;
-    --raised: #f1f2f5;
-    --raised-hover: #e6e8ed;
-    --hover: #eceef2;
-    --hover-2: #e7e9ee;
-    --agent-bg: #f6f7f9;
-    --line: #e3e5ea;
-    --line-2: #e0e3e9;
-    --line-3: #d0d4dc;
-    --input-line: #cfd3db;
-    --line-hover: #b9bfc9;
-    --text: #1b1d22;
-    --text-2: #3b404a;
-    --muted: #626976;
-    --text-strong: #0f1115;
-    --accent: #2f5fe0;
-    --accent-line: #3b6ff5;
-    --link-hover: #1d45b0;
-    --on-accent: #ffffff;
-    --accent-soft-line: #b8caf6;
-    --sel-bg: #e6edff;
+    --bg: #f5f0e3;
+    --panel: #fbf8f0;
+    --card: #fffdf8;
+    --menu: #fffdf8;
+    --card-hover: #f8f3e6;
+    --card-sel: #efeadb;
+    --well: #efe8d6;
+    --raised: #eee6d2;
+    --raised-hover: #e5dbc3;
+    --hover: #f0e9d7;
+    --hover-2: #e7dec8;
+    --agent-bg: #f5f0e3;
+    --line: #e5dbc5;
+    --line-2: #e1d7c0;
+    --line-3: #d3c7ac;
+    --input-line: #cfc3a7;
+    --line-hover: #b8ab8c;
+    --text: #121833;
+    --text-2: #2e3557;
+    --muted: #5c617c;
+    --text-strong: #0a0e22;
+    --accent: #26306a;
+    --accent-line: #3a4a9a;
+    --link-hover: #161d48;
+    --on-accent: #fbf8f0;
+    --accent-soft-line: #c3c7e0;
+    --sel-bg: #e8e5ef;
     --ok: #1f9d55;
     --warn: #b7791f;
     --bad: #d1453b;
-    --idle: #c3c8d1;
+    --idle: #cfc6b2;
     --warn-text: #8a5a00;
     --warn-bg: #fff6e5;
     --warn-line: #efd29a;
@@ -129,9 +129,9 @@
     --attn-bg: #fff2e3;
     --attn-bg-hover: #ffe7cc;
     --attn-bg-2: #fff7ee;
-    --type-script-bg: #e8efff;
-    --type-script: #2a4fb8;
-    --type-claude-bg: #fcefd8;
+    --type-script-bg: #e6e9f7;
+    --type-script: #2a3a8c;
+    --type-claude-bg: #fbecd2;
     --type-linear-bg: #efe8ff;
     --type-linear: #5b3fb0;
     --danger-text: #b3261e;
@@ -140,17 +140,17 @@
     --ok-bg: #e6f6ec;
     --ok-line: #9fd6b2;
     --ok-text: #17703e;
-    --shadow-sm: 0 1px 2px rgba(15, 17, 21, .08);
-    --shadow-lg: 0 12px 32px rgba(15, 17, 21, .16);
-    --drop-bg: rgba(59, 111, 245, .08);
-    --running: #b88a00;
-    --running-glow: rgba(184, 138, 0, .16);
+    --shadow-sm: 0 1px 2px rgba(18, 24, 51, .08);
+    --shadow-lg: 0 12px 32px rgba(18, 24, 51, .16);
+    --drop-bg: rgba(38, 48, 106, .07);
+    --running: #955a00;
+    --running-glow: rgba(149, 90, 0, .16);
     --failed: #cf222e;
     --failed-glow: rgba(207, 34, 46, .12);
-    --syn-text: #1f2328;
-    --syn-out: #59636e;
-    --syn-gutter: #c4c9d1;
-    --syn-step: #2f5fe0;
+    --syn-text: #1a1f38;
+    --syn-out: #5c617c;
+    --syn-gutter: #cfc3a7;
+    --syn-step: #26306a;
     --syn-prompt: #1a7f37;
     --syn-prog: #0550ae;
     --syn-flag: #8250df;
@@ -162,7 +162,7 @@
     --syn-path: #0a6a5e;
     --syn-url: #0550ae;
     --syn-id: #6639ba;
-    --syn-tool: #59636e;
+    --syn-tool: #5c617c;
     --syn-tool-shell: #1a7f37;
     --syn-tool-file: #0550ae;
     --syn-tool-linear: #6639ba;
@@ -290,6 +290,17 @@ select.input { font-family: var(--font-mono); padding: 0 8px; }
 
 /* Board, laid out like Linear's: fixed-width columns that scroll on their own */
 .board-scroll { overflow-x: auto; overflow-y: hidden; flex: 1 1 auto; min-height: 0; }
+/* The board, plus a cover that locks it while the refresh button reloads it from Linear */
+.board-area { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.board-area[aria-busy='true'] > .board-scroll { opacity: .45; }
+.board-lock { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--text-2); font-size: 13px; cursor: progress; }
+.spinner { width: 18px; height: 18px; border: 2px solid var(--line-3); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+.btn.icon-only { width: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--text-2); }
+.btn.icon-only:hover:not(:disabled) { color: var(--text); }
+.btn.icon-only:disabled { cursor: progress; }
+.btn.spinning svg { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner, .btn.spinning svg { animation-duration: 2.4s; } }
 .board { display: flex; gap: 12px; padding: 12px 16px 0; height: 100%; width: max-content; box-sizing: border-box; }
 .col { flex: 0 0 300px; width: 300px; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 .colhead { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; padding: 6px 6px 10px; color: var(--text); }
@@ -620,6 +631,20 @@ button.prop:disabled:hover { background: transparent; color: var(--text-2); }
 .run-row .when { margin-left: auto; flex: none; color: var(--muted); font-family: var(--font-mono); font-size: 10.5px; }
 .run-more { padding: 4px 8px; font-size: 11px; color: var(--muted); }
 
+/* Linked tickets on a card: folded by default, only there when the ticket has any */
+.relations { display: flex; flex-direction: column; gap: 4px; }
+.relations-toggle { display: inline-flex; align-items: center; gap: 5px; align-self: flex-start; padding: 2px 4px; margin-left: -4px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
+.relations-toggle:hover { color: var(--text); background: var(--hover); }
+.relations-toggle:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
+.relations-toggle .chev { width: 10px; font-size: 10px; }
+.relations-toggle .n { font-family: var(--font-mono); font-size: 10.5px; }
+.relations-list { margin: 0; }
+.relations-list .kind { flex: none; width: 76px; color: var(--muted); font-size: 10.5px; }
+.relations-list .rid { flex: none; color: var(--muted); font-family: var(--font-mono); font-size: 10.5px; }
+.relations-list .done .what { color: var(--muted); text-decoration: line-through; }
+.relations-note { margin: 0; font-size: 11px; color: var(--muted); }
+.relations-note.bad { color: var(--bad); }
+
 /* Board columns can be dragged by their header; a line shows where one will land */
 .colhead[draggable='true'] { cursor: grab; }
 .colhead[draggable='true']:active { cursor: grabbing; }
@@ -745,7 +770,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .glimpse-tabs button { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; border-bottom: 2px solid transparent; padding: 6px 10px 8px; font-size: 13px; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .glimpse-tabs button:hover { color: var(--text); }
 .glimpse-tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
-.glimpse-doc { max-width: 860px; }
+.glimpse-doc { min-width: 0; }
 .glimpse-doc-head { display: flex; align-items: flex-start; gap: 12px; }
 .glimpse-doc-head .glimpse-title { flex: 1 1 auto; margin-bottom: 4px; }
 .glimpse-doc > .note { margin-bottom: 16px; }

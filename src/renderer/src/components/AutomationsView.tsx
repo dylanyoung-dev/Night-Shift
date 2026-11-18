@@ -167,7 +167,7 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
         {list.map((a, i) => (
           <button key={a.id} type="button" className={`state${i === selected ? ' active' : ''}`} onClick={() => setSelected(i)}>
             <span className="project-row">
-              <span className="dot" style={{ background: a.enabled ? '#3fb950' : '#3a3f4b' }} aria-hidden="true" />
+              <span className="dot" style={{ background: a.enabled ? 'var(--ok)' : 'var(--idle)' }} aria-hidden="true" />
               {a.name || 'Untitled'}
               {!a.enabled && <span className="badge off">Off</span>}
             </span>

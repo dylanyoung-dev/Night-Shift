@@ -50,17 +50,25 @@ export default function Sidebar({
   return (
     <nav className="sidebar" aria-label="Main">
       <div className="brand">
-        <svg viewBox="0 0 200 200" width="22" height="22" aria-hidden="true">
+        <svg viewBox="0 0 100 100" width="22" height="22" aria-hidden="true">
           <defs>
-            <mask id="brand-cut">
-              <rect width="200" height="200" fill="#fff" />
-              <circle cx="124" cy="80" r="58" fill="#000" />
+            <mask id="brand-hub">
+              <rect width="100" height="100" fill="#fff" />
+              <circle cx="50" cy="50" r="17" fill="#000" />
+            </mask>
+            <mask id="brand-moon">
+              <rect width="100" height="100" fill="#fff" />
+              <circle cx="56" cy="45" r="9" fill="#000" />
             </mask>
           </defs>
-          <rect width="200" height="200" rx="40" fill="#141821" />
-          <circle cx="96" cy="104" r="66" fill="#e3b341" mask="url(#brand-cut)" />
-          <path d="M106 76 L126 94 L106 112" stroke="#8fb0ff" strokeWidth="16" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-          <rect x="134" y="100" width="28" height="14" rx="4" fill="#8fb0ff" />
+          <rect width="100" height="100" rx="22" fill="#121833" />
+          <g mask="url(#brand-hub)">
+            {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
+              <rect key={a} x="44" y="12" width="12" height="16" rx="2" fill="#F2E6C9" transform={`rotate(${a} 50 50)`} />
+            ))}
+            <circle cx="50" cy="50" r="30" fill="#F2E6C9" />
+          </g>
+          <circle cx="50" cy="50" r="11" fill="#FFB547" mask="url(#brand-moon)" />
         </svg>
         Night Shift
       </div>

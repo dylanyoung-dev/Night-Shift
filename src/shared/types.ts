@@ -131,8 +131,10 @@ export interface LinearIssue {
   milestone: { id: string; name: string } | null // the project milestone it belongs to
   blocked: boolean // another issue blocks this one
   subIssues: { done: number; total: number } | null
+  relationCount?: number // parent + sub-issues + linked tickets; missing on data from older builds
   pullRequests: LinearPullRequest[]
   previewUrl: string | null // deploy preview link attached to the issue
+  hasSpec?: boolean // a Linear document (the spec) is attached; missing on data from older builds
 }
 
 export interface LinearLabel {
@@ -415,6 +417,12 @@ export interface PlanLimits {
   windows: Record<string, PlanWindow> // five_hour, seven_day, seven_day_opus, …
 }
 
+// A ticket linked to another, from the second ticket's point of view.
+export interface IssueRelation {
+  kind: 'parent' | 'child' | 'blocked-by' | 'blocks' | 'duplicates' | 'duplicated-by' | 'related'
+  issue: { id: string; identifier: string; title: string; url: string; state: { name: string; type: string; color: string } }
+}
+
 // Everything the Linear detail panel shows for one ticket.
 export interface IssueDetail {
   id: string
@@ -493,6 +501,7 @@ export interface NightShiftApi {
   onUpdateState?(cb: (s: UpdateState) => void): () => void
   installUpdate?(): Promise<void> // restart now and install the downloaded update
   getIssueDetail?(issueId: string): Promise<IssueDetail | { error: string }>
+  getIssueRelations?(issueId: string): Promise<IssueRelation[] | { error: string }>
   linearImage?(url: string): Promise<string | null> // data: URL for an image uploaded to Linear
   getUsage?(days: number, refresh?: boolean): Promise<UsageReport>
   getTicketStats?(days: number): Promise<TicketStats>

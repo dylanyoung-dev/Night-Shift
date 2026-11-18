@@ -25,6 +25,9 @@ export interface RunnerDeps {
   onOutput(runId: string, chunk: string): void
   onWaiting(run: Run): void // a Claude step needs the person
   applyFailurePlan(issueId: string, plan: FailurePlan): Promise<{ removedLabel: boolean }>
+  // A run may have changed tickets in Linear: ticket names the one (id or identifier), null means reload
+  // the whole board, undefined means the run's own ticket (or the whole board for a global run).
+  onTicketsChanged?(run: Run, ticket?: string | null): void
   getSet(name: string): StepSet | undefined // the action a run came from, by name (for continuing a run)
 }
 
@@ -449,7 +452,7 @@ export class Runner {
         this.deps.onWaiting(a.run)
       }
       // Claude steps: turn stream-json events into readable lines, and keep the raw events too.
-      const fmt = claude ? new ClaudeStreamFormatter(cwd) : null
+      const fmt = claude ? new ClaudeStreamFormatter(cwd, undefined, (t) => this.deps.onTicketsChanged?.(a.run, t)) : null
       const rawFile = a.run.logFile.replace(/\.log$/, '.events.jsonl')
       child.stdout?.on('data', (d: Buffer) => {
         const text = d.toString()
@@ -484,6 +487,8 @@ export class Runner {
       child.on('close', (code) => {
         const rest = fmt?.flush()
         if (rest) this.log(a.run, rest)
+        // Whatever the step was, it may have moved the ticket (a script, or Linear calls not seen above).
+        this.deps.onTicketsChanged?.(a.run)
         a.child = undefined
         a.stdin = undefined
         if (a.run.interactive || a.run.status === 'waiting') {

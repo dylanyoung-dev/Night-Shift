@@ -67,7 +67,7 @@ export default function IssueMenu({ issue, board, mode, at, onMode, onUpdate, on
     // Fixed options at the bottom of the card's Actions dropdown, under a line.
     const statics = (): Option[] => [
       { key: 'glimpse', label: 'Glimpse in Linear', icon: <GlimpseIcon />, divider: true, run: () => (onGlimpse('ticket'), onClose()) },
-      { key: 'spec', label: 'View spec', icon: <DocIcon />, run: () => (onGlimpse('spec'), onClose()) }
+      ...(issue.hasSpec !== false ? [{ key: 'spec', label: 'View spec', icon: <DocIcon />, run: () => (onGlimpse('spec'), onClose()) }] : [])
     ]
     const pick = (update: IssueUpdate) => () => {
       onUpdate(update)

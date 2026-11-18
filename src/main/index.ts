@@ -4,7 +4,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, sta
 import type { BoardData, ImportGroupKey, IssueUpdate, LinearState, SettingsUpdate, StepSet } from '../shared/types'
 import { globalRunKey } from '../shared/types'
 import { getLinearKey, getSettings, updateSettings } from './settings'
-import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, removeLabelByName, updateIssue, fetchIssueDetail, fetchLinearImage } from './linear'
+import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, removeLabelByName, updateIssue, fetchIssueDetail, fetchIssueRelations, fetchLinearImage } from './linear'
 import { globalSet, loadSteps, saveSteps, setForState, setsForState, starterSteps, STEPS_RELATIVE_PATH } from './steps'
 import { Runner } from './runner'
 import { getUsage, usageProgress } from './usage'
@@ -23,11 +23,63 @@ app.setPath('userData', process.env.NIGHTSHIFT_USER_DATA || join(app.getPath('ap
 
 let win: BrowserWindow | null = null
 let board: BoardData = { states: [], issues: [], fetchedAt: null }
+
+// The board is kept for BOARD_CACHE_MS before Linear is asked again; the refresh button skips the wait.
+// It's saved to disk too, so a restart shows the last board straight away instead of an empty one.
+const BOARD_CACHE_MS = 5 * 60_000
+const boardCacheFile = (): string => join(app.getPath('userData'), 'board-cache.json')
+// What the board was fetched for. A cached board for another team, project or set of hidden states is ignored.
+function boardCacheKey(): string {
+  const s = getSettings()
+  const project = s.projects.find((p) => p.id === s.activeProjectId)
+  return JSON.stringify([s.linearTeamKey, project?.id ?? null, project?.linearProjectIds ?? null, s.hiddenStateTypes])
+}
+function saveBoardCache(): void {
+  if (!board.fetchedAt) return
+  try {
+    writeFileSync(boardCacheFile(), JSON.stringify({ key: boardCacheKey(), board }))
+  } catch (err) {
+    console.warn(`Board cache: ${(err as Error).message}`)
+  }
+}
+// Loads the saved board if it belongs to the current settings. Returns whether it's still fresh.
+function loadBoardCache(): boolean {
+  try {
+    const saved = JSON.parse(readFileSync(boardCacheFile(), 'utf8')) as { key: string; board: BoardData }
+    if (saved.key !== boardCacheKey() || !saved.board?.fetchedAt) return false
+    board = { ...saved.board, error: undefined }
+    allStates = board.allStates ?? board.states
+    return Date.now() - saved.board.fetchedAt < BOARD_CACHE_MS
+  } catch {
+    return false
+  }
+}
 let allStates: LinearState[] = [] // every team state, hidden ones too, for moves by name
 let pollTimer: NodeJS.Timeout | null = null
 
 function send(channel: string, ...args: unknown[]): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
+}
+
+// Tickets a run changed in Linear, synced together a moment later so a burst of calls is one update.
+const ticketsToSync = new Set<string>()
+let wholeBoardToSync = false
+let ticketSyncTimer: NodeJS.Timeout | undefined
+function queueTicketSync(ticket: string | null): void {
+  if (ticket === null) wholeBoardToSync = true
+  else ticketsToSync.add(ticket)
+  if (ticketSyncTimer) return
+  ticketSyncTimer = setTimeout(async () => {
+    ticketSyncTimer = undefined
+    const whole = wholeBoardToSync
+    const tickets = [...ticketsToSync]
+    wholeBoardToSync = false
+    ticketsToSync.clear()
+    if (whole) return void refreshBoard()
+    const key = getLinearKey()
+    if (!key) return
+    for (const t of tickets) await syncIssue(key, t).catch((err: Error) => console.warn(`Linear sync of ${t}: ${err.message}`))
+  }, 1500)
 }
 
 const runner = new Runner({
@@ -45,6 +97,7 @@ const runner = new Runner({
     await syncIssue(key, issueId)
   },
   onRuns: (runs) => send('runs', runs),
+  onTicketsChanged: (run, ticket) => queueTicketSync(ticket !== undefined ? ticket : run.global ? null : run.issueId),
   onOutput: (runId, chunk) => send('run-output', runId, chunk),
   onWaiting: (run) => notifyWaiting(run.id, run.identifier, run.waiting?.reason ?? 'Claude needs you'),
   getSet: (name) => loadSteps(getSettings().repoPath).sets.find((x) => x.name.toLowerCase() === name.toLowerCase()),
@@ -137,6 +190,7 @@ async function refreshBoard(): Promise<BoardData> {
         ? { error: `"${project.name}" isn't linked to a Linear project yet. Link one in Settings › Projects.` }
         : {})
     }
+    saveBoardCache()
     void scheduler.tick()
   } catch (err) {
     board = { ...board, error: `Linear: ${(err as Error).message}` }
@@ -150,8 +204,9 @@ async function syncIssue(key: string, issueId: string): Promise<void> {
   const fresh = await fetchIssue(key, issueId)
   const inProject = !board.project || (fresh.projectId !== null && board.project.linearProjectIds.includes(fresh.projectId))
   const visible = inProject && board.states.some((st) => st.id === fresh.stateId)
-  const others = board.issues.filter((i) => i.id !== issueId)
+  const others = board.issues.filter((i) => i.id !== fresh.id)
   board = { ...board, issues: visible ? [...others, fresh] : others }
+  saveBoardCache()
   send('board', board)
 }
 
@@ -189,27 +244,24 @@ function cleanUpdate(u: IssueUpdate): IssueUpdate | string {
   return Object.keys(out).length ? out : 'Nothing to change'
 }
 
-function pollMs(): number {
-  return Math.max(15, getSettings().pollSeconds) * 1000
-}
-
-// Linear syncs only while Night Shift is the focused window; automations keep their own checks.
+// The board reloads from Linear once its cache is BOARD_CACHE_MS old, and only while Night Shift is the
+// focused window. Automations check Linear on their own, every pollSeconds.
 function schedulePolling(): void {
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = setInterval(() => {
-    if (win && !win.isDestroyed() && win.isFocused()) void refreshBoard()
-  }, pollMs())
+    if (win && !win.isDestroyed() && win.isFocused()) syncIfStale()
+  }, 30_000)
 }
 
 // System, dark or light. Electron passes it on to the page (prefers-color-scheme) and the title bar.
 function applyTheme(): void {
   nativeTheme.themeSource = getSettings().theme
-  win?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0F1115' : '#F6F7F9')
+  win?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0C1024' : '#F5F0E3')
 }
 
-// Back in focus: catch up straight away if the last sync is older than the interval.
+// Reloads the board if its cache has run out (also on coming back into focus).
 function syncIfStale(): void {
-  if (!board.fetchedAt || Date.now() - board.fetchedAt >= pollMs()) void refreshBoard()
+  if (!board.fetchedAt || Date.now() - board.fetchedAt >= BOARD_CACHE_MS) void refreshBoard()
 }
 
 function registerIpc(): void {
@@ -321,6 +373,16 @@ function registerIpc(): void {
       return { error: `Linear: ${(err as Error).message}` }
     }
   })
+  ipcMain.handle('issue:relations', async (_e, issueId: string) => {
+    const key = getLinearKey()
+    if (!key) return { error: 'Add your Linear API key in Settings.' }
+    if (!board.issues.some((i) => i.id === issueId)) return { error: 'That ticket is no longer on the board.' }
+    try {
+      return await fetchIssueRelations(key, issueId)
+    } catch (err) {
+      return { error: `Linear: ${(err as Error).message}` }
+    }
+  })
   ipcMain.handle('linear:image', async (_e, url: string) => {
     const key = getLinearKey()
     if (!key || typeof url !== 'string') return null
@@ -366,7 +428,7 @@ function registerIpc(): void {
     const s = getSettings()
     if (!s.repoPath) return { error: 'Set the repo path in Settings first.' }
     const issue = board.issues.find((i) => i.id === issueId)
-    if (!issue) return { error: 'Ticket not found on the board. Try Sync Linear.' }
+    if (!issue) return { error: 'Ticket not found on the board. Reload the board (the arrows next to Run action) and try again.' }
     if (runner.isBusy(issue.id)) return { error: `${issue.identifier} already has a run going.` }
     const sets = setsForState(loadSteps(s.repoPath), issue.stateName)
     if (!sets.length) return { error: `No action is set up for "${issue.stateName}".` }
@@ -437,7 +499,7 @@ function createWindow(): void {
     center: true,
     minWidth: 960,
     minHeight: 600,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0F1115' : '#F6F7F9',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0C1024' : '#F5F0E3',
     title: 'Night Shift',
     icon: appIcon,
     autoHideMenuBar: true,
@@ -469,8 +531,9 @@ app.whenReady().then(() => {
   createWindow()
   log.info(`Night Shift ${app.getVersion()} started${app.isPackaged ? '' : ' (development)'}`)
   startUpdater((st) => send('update', st))
-  nativeTheme.on('updated', () => win?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0F1115' : '#F6F7F9'))
-  void refreshBoard()
+  nativeTheme.on('updated', () => win?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0C1024' : '#F5F0E3'))
+  // A fresh board from the last session is used as is; an older one shows while the new one loads.
+  if (!loadBoardCache()) void refreshBoard()
   schedulePolling()
   // Schedules are checked every 30s; watch automations also check after each Linear sync.
   setInterval(() => void scheduler.tick(), 30_000)

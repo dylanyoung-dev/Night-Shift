@@ -1,4 +1,4 @@
-import type { IssueDetail, IssueDocument, IssueUpdate, LinearIssue, LinearMilestone, LinearProject, LinearPullRequest, LinearState, TeamMeta } from '../shared/types'
+import type { IssueDetail, IssueDocument, IssueRelation, IssueUpdate, LinearIssue, LinearMilestone, LinearProject, LinearPullRequest, LinearState, TeamMeta } from '../shared/types'
 
 const ENDPOINT = 'https://api.linear.app/graphql'
 
@@ -126,6 +126,10 @@ const ISSUE_FIELDS = `
   inverseRelations(first: 20) { nodes { type } }
   attachments(first: 10) { nodes { url title sourceType metadata } }
 `
+// Extras the board can do without: whether a document (the spec) is attached, and the links this ticket
+// makes to others (it blocks X). Both are dropped if Linear calls the board query too complex.
+const SPEC_FIELD = 'documents(first: 1) { nodes { id } } relations(first: 20) { nodes { type } }'
+let specField = true
 
 interface IssueNode {
   id: string
@@ -144,8 +148,10 @@ interface IssueNode {
   project: { id: string } | null
   projectMilestone: { id: string; name: string } | null
   children: { nodes: { state: { type: string } }[] }
+  relations?: { nodes: { type: string }[] }
   inverseRelations: { nodes: { type: string }[] }
   attachments: { nodes: { url: string; title: string; sourceType: string | null; metadata: Record<string, unknown> | null }[] }
+  documents?: { nodes: { id: string }[] }
 }
 
 const PR_URL = /\/pull\/(\d+)/
@@ -202,11 +208,15 @@ function toIssue(n: IssueNode): LinearIssue {
     projectId: n.project?.id ?? null,
     milestone: n.projectMilestone ? { id: n.projectMilestone.id, name: n.projectMilestone.name } : null,
     blocked: n.inverseRelations.nodes.some((r) => r.type === 'blocks'),
+    // Parent, sub-issues and links to other tickets. "similar" is Linear's own suggestion, not a link anyone made.
+    relationCount:
+      (n.parent ? 1 : 0) + kids.length + [...(n.relations?.nodes ?? []), ...n.inverseRelations.nodes].filter((r) => r.type !== 'similar').length,
     subIssues: kids.length
       ? { done: kids.filter((k) => k.state.type === 'completed' || k.state.type === 'canceled').length, total: kids.length }
       : null,
     pullRequests: pullRequests(n),
-    previewUrl: previewUrl(n)
+    previewUrl: previewUrl(n),
+    hasSpec: n.documents ? n.documents.nodes.length > 0 : undefined
   }
 }
 
@@ -216,6 +226,17 @@ export async function fetchIssues(apiKey: string, teamKey: string, stateIds: str
   if (!stateIds.length || projectIds?.length === 0) return []
   const filter: Record<string, unknown> = { team: { key: { eq: teamKey } }, state: { id: { in: stateIds } } }
   if (projectIds) filter.project = { id: { in: projectIds } }
+  try {
+    return await issuePages(apiKey, filter, specField)
+  } catch (err) {
+    if (!specField || !/complex/i.test((err as Error).message)) throw err
+    specField = false
+    console.warn('Linear: board query too complex with documents and relations; View spec will show on every card.')
+    return issuePages(apiKey, filter, false)
+  }
+}
+
+async function issuePages(apiKey: string, filter: Record<string, unknown>, withSpec: boolean): Promise<LinearIssue[]> {
   const out: LinearIssue[] = []
   let after: string | null = null
   // 50 per page keeps the nested connections under Linear's query complexity limit.
@@ -231,7 +252,7 @@ export async function fetchIssues(apiKey: string, teamKey: string, stateIds: str
           after: $after
           orderBy: updatedAt
         ) {
-          nodes { ${ISSUE_FIELDS} }
+          nodes { ${ISSUE_FIELDS} ${withSpec ? SPEC_FIELD : ''} }
           pageInfo { hasNextPage endCursor }
         }
       }`,
@@ -246,7 +267,7 @@ export async function fetchIssues(apiKey: string, teamKey: string, stateIds: str
 
 // Re-reads one issue so the board shows what Linear holds after a change.
 export async function fetchIssue(apiKey: string, issueId: string): Promise<LinearIssue> {
-  const data = await gql<{ issue: IssueNode }>(apiKey, `query Issue($id: String!) { issue(id: $id) { ${ISSUE_FIELDS} } }`, {
+  const data = await gql<{ issue: IssueNode }>(apiKey, `query Issue($id: String!) { issue(id: $id) { ${ISSUE_FIELDS} ${SPEC_FIELD} } }`, {
     id: issueId
   })
   return toIssue(data.issue)
@@ -415,6 +436,40 @@ export async function fetchIssueDetail(apiKey: string, issueId: string): Promise
     documents,
     documentsError
   }
+}
+
+// Every ticket linked to this one, for the Relations section on a board card.
+// relations point from this ticket (it blocks X); inverseRelations point to it (X blocks it).
+export async function fetchIssueRelations(apiKey: string, issueId: string): Promise<IssueRelation[]> {
+  type Ref = IssueRelation['issue']
+  const REF = 'id identifier title url state { name type color }'
+  const { issue: n } = await gql<{
+    issue: {
+      parent: Ref | null
+      children: { nodes: Ref[] }
+      relations: { nodes: { type: string; relatedIssue: Ref | null }[] }
+      inverseRelations: { nodes: { type: string; issue: Ref | null }[] }
+    }
+  }>(
+    apiKey,
+    `query Relations($id: String!) {
+      issue(id: $id) {
+        parent { ${REF} }
+        children(first: 50) { nodes { ${REF} } }
+        relations(first: 20) { nodes { type relatedIssue { ${REF} } } }
+        inverseRelations(first: 20) { nodes { type issue { ${REF} } } }
+      }
+    }`,
+    { id: issueId }
+  )
+  const OUT: Record<string, IssueRelation['kind']> = { blocks: 'blocks', duplicate: 'duplicates', related: 'related' }
+  const IN: Record<string, IssueRelation['kind']> = { blocks: 'blocked-by', duplicate: 'duplicated-by', related: 'related' }
+  const out: IssueRelation[] = []
+  if (n.parent) out.push({ kind: 'parent', issue: n.parent })
+  for (const c of n.children.nodes) out.push({ kind: 'child', issue: c })
+  for (const r of n.inverseRelations.nodes) if (IN[r.type] && r.issue) out.push({ kind: IN[r.type], issue: r.issue })
+  for (const r of n.relations.nodes) if (OUT[r.type] && r.relatedIssue) out.push({ kind: OUT[r.type], issue: r.relatedIssue })
+  return out
 }
 
 // Images pasted into Linear live on uploads.linear.app and need the API key to load.

@@ -13,7 +13,11 @@ type Json = Record<string, any>
 interface ToolCall {
   name: string
   depth: number
+  ticket?: string // the ticket a Linear tool was called on, if it named one
 }
+
+// Linear MCP tools that change something (save_issue, create_attachment…), as opposed to reads.
+const LINEAR_WRITE = /^mcp__.*linear.*__(save|create|update|delete|merge|restore|retire|resolve|submit|share|unshare)_/i
 
 function clip(s: string, n = MAX_LINE): string {
   const one = s.replace(/\s+/g, ' ').trim()
@@ -47,9 +51,12 @@ export class ClaudeStreamFormatter {
   }
 
   // onResult fires when Claude ends a turn, with the raw result event.
+  // onLinearWrite fires when a Linear tool changed something: with the ticket it named, or null for a
+  // ticket write that named none (a new ticket).
   constructor(
     private cwd: string,
-    private onResult?: (ev: Json) => void
+    private onResult?: (ev: Json) => void,
+    private onLinearWrite?: (ticket: string | null) => void
   ) {}
 
   // Feed raw stdout; returns formatted text to show (may be empty while a line is incomplete).
@@ -177,7 +184,9 @@ export class ClaudeStreamFormatter {
             this.lastText = part.text.trim()
             out += `\n${pad}${part.text.trim().split('\n').join(`\n${pad}`)}\n`
           } else if (part.type === 'tool_use') {
-            this.calls.set(part.id, { name: part.name, depth })
+            const inp = (part.input ?? {}) as Json
+            const ticket = [inp.id, inp.issueId, inp.issue].find((v) => typeof v === 'string' && v.trim())
+            this.calls.set(part.id, { name: part.name, depth, ticket })
             out += `${pad}→ ${this.summarize(part.name, part.input)}\n`
           }
         }
@@ -195,6 +204,10 @@ export class ClaudeStreamFormatter {
           // denials too, but no flag fixes them; Claude reads the reason and adjusts.
           if (part.is_error === true && HOOK_BLOCK.test(textOf(part.content))) this.hookBlocked.add(String(part.tool_use_id))
           out += this.output(call, part.content, part.is_error === true, callPad)
+          if (call && part.is_error !== true && LINEAR_WRITE.test(call.name)) {
+            if (call.ticket) this.onLinearWrite?.(call.ticket)
+            else if (/issue/i.test(call.name)) this.onLinearWrite?.(null)
+          }
         }
         return out
       }

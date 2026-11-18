@@ -223,7 +223,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
               <input className="input" value={form.linearTeamKey} onChange={(e) => set('linearTeamKey', e.target.value.trim())} />
             </label>
             <label className="field">
-              Check Linear every (seconds)
+              Automations check Linear every (seconds)
               <input
                 className="input"
                 type="number"

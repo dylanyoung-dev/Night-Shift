@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { groupLabel, shortLabel } from './FilterBar'
-import { DEFAULT_FAILURE_LABEL, isActiveRun, type BoardData, type IssueUpdate, type LinearIssue, type LinearLabel, type LinearState, type Run, type StepChoice } from '../../../shared/types'
+import { DEFAULT_FAILURE_LABEL, isActiveRun, type BoardData, type IssueRelation, type IssueUpdate, type LinearIssue, type LinearLabel, type LinearState, type Run, type StepChoice } from '../../../shared/types'
 import IssueMenu, { type MenuMode } from './IssueMenu'
 import { duration, runColor, runLabel } from '../util'
 import {
@@ -77,6 +77,107 @@ function useStartedProgress(states: LinearState[]): Map<string, number> {
 
 function open(url: string): void {
   void window.nightShift.openInBrowser(url)
+}
+
+const RELATION_LABEL: Record<IssueRelation['kind'], string> = {
+  parent: 'Parent',
+  'blocked-by': 'Blocked by',
+  blocks: 'Blocks',
+  child: 'Sub-issue',
+  duplicates: 'Duplicate of',
+  'duplicated-by': 'Duplicated by',
+  related: 'Related'
+}
+const RELATION_ORDER = Object.keys(RELATION_LABEL) as IssueRelation['kind'][]
+
+// Parent, sub-issues, blockers and other linked tickets, folded away until asked for.
+// The board only knows how many there are; the tickets themselves load on opening.
+// Relations already loaded, by ticket. Kept across board refreshes so reopening is instant.
+// An entry is shown at once but reloaded in the background once it's older than RELATIONS_FRESH_MS,
+// and skipped entirely when the board's count for the ticket no longer matches (a link was added or removed).
+const RELATIONS_FRESH_MS = 30_000
+const relationsCache = new Map<string, { items: IssueRelation[]; count: number; at: number }>()
+export function clearRelationsCache(): void {
+  relationsCache.clear()
+}
+
+function Relations({ issueId, count }: { issueId: string; count: number }): JSX.Element {
+  const [shown, setShown] = useState(false)
+  const [items, setItems] = useState<IssueRelation[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = async (): Promise<void> => {
+    const hit = relationsCache.get(issueId)
+    const usable = hit && hit.count === count
+    setItems(usable ? hit.items : null)
+    if (usable && Date.now() - hit.at < RELATIONS_FRESH_MS) return
+    if (!window.nightShift.getIssueRelations) {
+      setError('Restart Night Shift to load relations.')
+      return
+    }
+    setError(null)
+    const r = await window.nightShift.getIssueRelations(issueId)
+    if ('error' in r) {
+      if (!usable) setError(r.error) // keep showing the older list rather than an error
+      return
+    }
+    const sorted = [...r].sort((a, b) => RELATION_ORDER.indexOf(a.kind) - RELATION_ORDER.indexOf(b.kind))
+    relationsCache.set(issueId, { items: sorted, count, at: Date.now() })
+    setItems(sorted)
+  }
+
+  // A board refresh changed the count while the section is open: reload it.
+  useEffect(() => {
+    if (shown) void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [count])
+
+  const toggle = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    const next = !shown
+    setShown(next)
+    if (next) void load()
+  }
+
+  return (
+    <div className="relations" onClick={(e) => e.stopPropagation()}>
+      <button type="button" className="relations-toggle" aria-expanded={shown} onClick={toggle}>
+        <span className="chev" aria-hidden="true">
+          {shown ? '▾' : '▸'}
+        </span>
+        Relations <span className="n">{count}</span>
+      </button>
+      {shown &&
+        (error ? (
+          <p className="relations-note bad">{error}</p>
+        ) : !items ? (
+          <p className="relations-note">Loading…</p>
+        ) : items.length === 0 ? (
+          <p className="relations-note">No linked tickets.</p>
+        ) : (
+          <ul className="run-stack relations-list">
+            {items.map((r, i) => {
+              const done = r.issue.state.type === 'completed' || r.issue.state.type === 'canceled'
+              return (
+                <li key={`${r.kind}${r.issue.id}${i}`}>
+                  <button
+                    type="button"
+                    className={`run-row${done ? ' done' : ''}`}
+                    title={`${RELATION_LABEL[r.kind]}: ${r.issue.identifier} ${r.issue.title} (${r.issue.state.name}) · open in Linear`}
+                    onClick={() => open(r.issue.url)}
+                  >
+                    <span className="kind">{RELATION_LABEL[r.kind]}</span>
+                    <span className="dot" style={{ background: r.issue.state.color }} aria-hidden="true" />
+                    <span className="rid">{r.issue.identifier}</span>
+                    <span className="what">{r.issue.title}</span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        ))}
+    </div>
+  )
 }
 
 function Card({
@@ -261,6 +362,8 @@ function Card({
           {older.length > OLDER_SHOWN && <li className="run-more">+{older.length - OLDER_SHOWN} earlier on Run history</li>}
         </ul>
       )}
+
+      {(issue.relationCount ?? 0) > 0 && <Relations issueId={issue.id} count={issue.relationCount!} />}
 
       <div className="card-foot">
         <span className="created">{createdLabel(issue.createdAt)}</span>

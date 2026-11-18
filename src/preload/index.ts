@@ -33,6 +33,7 @@ const api: NightShiftApi = {
   onUpdateState: (cb) => listen<[UpdateState]>('update', cb),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   getIssueDetail: (issueId: string) => ipcRenderer.invoke('issue:detail', issueId),
+  getIssueRelations: (issueId: string) => ipcRenderer.invoke('issue:relations', issueId),
   linearImage: (url: string) => ipcRenderer.invoke('linear:image', url),
   getLimits: () => ipcRenderer.invoke('limits:get'),
   checkLimits: () => ipcRenderer.invoke('limits:check'),
