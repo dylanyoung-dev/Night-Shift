@@ -416,7 +416,7 @@ export default function App(): JSX.Element {
               onReorderColumns={reorderColumns}
               onOpenLog={setLogRunId}
               selectedIssue={selectedIssue}
-              onSelect={(id) => setSelectedIssue((cur) => (cur === id ? null : id))}
+              onSelect={setSelectedIssue}
               onClearSelection={() => setSelectedIssue(null)}
               onStart={(id, setName) => void start(id, setName)}
               setsFor={setsFor}

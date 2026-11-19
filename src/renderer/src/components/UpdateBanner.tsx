@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { UpdateState } from '../../../shared/types'
+import RestartButton from './RestartButton'
 
 // "Update ready" toast. Never forces a restart: ignoring it installs the update on the next quit.
 export default function UpdateBanner({ running }: { running: number }): JSX.Element | null {
   const [state, setState] = useState<UpdateState | null>(null)
   const [hidden, setHidden] = useState<string | null>(null) // version dismissed for now
-  const [restarting, setRestarting] = useState(false)
 
   useEffect(() => {
     void window.nightShift.getUpdateState?.().then(setState)
@@ -23,17 +23,7 @@ export default function UpdateBanner({ running }: { running: number }): JSX.Elem
           Otherwise it installs when you quit.
         </span>
       </div>
-      <button
-        className="btn small primary"
-        type="button"
-        disabled={restarting}
-        onClick={() => {
-          setRestarting(true)
-          void window.nightShift.installUpdate?.()
-        }}
-      >
-        {restarting ? 'Restarting…' : 'Restart'}
-      </button>
+      <RestartButton label="Restart" />
       <button className="btn small" type="button" onClick={() => setHidden(state.available ?? null)} title="Hide until next launch">
         Later
       </button>

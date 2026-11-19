@@ -832,3 +832,8 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .ticket-panel .glimpse-head .btn.icon-only { width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 /* On very wide panels keep text at a readable line length */
 .ticket-panel .glimpse-doc, .ticket-panel .glimpse-main { max-width: 120ch; }
+
+/* A button whose request is under way (e.g. restarting to update): grey, with a spinner */
+.btn.busy, .btn.primary.busy { display: inline-flex; align-items: center; gap: 7px; color: var(--text-2); background: var(--raised); border: 1px solid var(--line-3); opacity: 1; cursor: progress; }
+.btn-spin { width: 12px; height: 12px; flex: none; border-radius: 50%; border: 1.6px solid var(--line-3); border-top-color: var(--text-2); animation: spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .btn-spin { animation-duration: 2.4s; } }

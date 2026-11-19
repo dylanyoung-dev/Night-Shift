@@ -417,8 +417,15 @@ const INTERACTIVE = '.card, button, a, input, select, textarea, label, [role="me
 
 export default function Board({ board, latestRun, runsByIssue, onReorderColumns, onOpenLog, selectedIssue, onSelect, onClearSelection, onStart, onUpdate, setsFor, onGlimpse, groupBy }: Props): JSX.Element {
   const scroll = useKeptScroll(board.project?.id ?? 'team')
+  // Uses the event's path, fixed when the click started, rather than walking up from the target: a card
+  // can re-render under the pointer (selecting it changes it), leaving the target detached from the card.
+  const onCardOrControl = (e: React.SyntheticEvent): boolean =>
+    e.nativeEvent.composedPath().some((n) => n instanceof Element && n.matches(INTERACTIVE))
+  const pressedOff = useRef(false)
   const clickedOff = (e: React.MouseEvent): void => {
-    if (selectedIssue && !(e.target as HTMLElement).closest(INTERACTIVE)) onClearSelection()
+    const off = pressedOff.current && !onCardOrControl(e)
+    pressedOff.current = false
+    if (selectedIssue && off) onClearSelection()
   }
   const [menu, setMenu] = useState<{ issueId: string; mode: MenuMode; at: { x: number; y: number } } | null>(null)
   const [dropState, setDropState] = useState<string | null>(null)
@@ -606,7 +613,7 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
   }
 
   return (
-    <div className={`board-scroll${lanes ? ' lanes-scroll' : ''}`} ref={scroll.ref} onScroll={scroll.onScroll} onClick={clickedOff}>
+    <div className={`board-scroll${lanes ? ' lanes-scroll' : ''}`} ref={scroll.ref} onScroll={scroll.onScroll} onPointerDownCapture={(e) => (pressedOff.current = !onCardOrControl(e))} onClick={clickedOff}>
       {lanes ? (
         <div className="lanes">
           <div className="lane-heads">

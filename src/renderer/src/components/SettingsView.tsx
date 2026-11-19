@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import ConflictBanner from './ConflictBanner'
 import SaveStatus from './SaveStatus'
+import RestartButton from './RestartButton'
 import { DEFAULT_HOST_PORT, DEFAULT_WORKTREE_PATH, type HostSettings, type HostStatus, type ImportGroupKey, type RemoteStatus, type ImportPreview, type RepoBranches, type Settings, type UpdateState } from '../../../shared/types'
 
 // Mirrors resolveWorktreePath in the main process, for the example under the field.
@@ -824,9 +825,7 @@ function AboutVersion(): JSX.Element {
         </span>
         <span className="note">{status}</span>
         {u?.status === 'ready' ? (
-          <button className="btn small primary" type="button" onClick={() => void window.nightShift.installUpdate?.()}>
-            Restart to update
-          </button>
+          <RestartButton />
         ) : (
           u &&
           u.status !== 'dev' && (
