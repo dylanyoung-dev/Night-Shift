@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
-import { CLAUDE_RUN_FLAGS, DEFAULT_CLAUDE_COMMAND, DEFAULT_FAILURE_LABEL, DEFAULT_FAILURE_RETRIES, setLabel, type LinearState, type OnFailure, type Settings, type StepDef, type StepSet, type StepsFile, type WorktreeMode } from '../../../shared/types'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { CLAUDE_RUN_FLAGS, DEFAULT_CLAUDE_COMMAND, DEFAULT_FAILURE_LABEL, DEFAULT_FAILURE_RETRIES, setLabel, type LinearState, type OnFailure, type SaveConflict, type Settings, type StepDef, type StepSet, type StepsFile, type WorktreeMode } from '../../../shared/types'
 import { groupSteps } from '../util'
 import { StatusIcon } from './LinearIcons'
 
@@ -50,6 +50,10 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [conflict, setConflict] = useState<SaveConflict | null>(null) // the last save clashed with an edit elsewhere
+  const [changedElsewhere, setChangedElsewhere] = useState(false)
+  const dirtyRef = useRef(false)
+  dirtyRef.current = dirty
 
   function load(): void {
     void window.nightShift.getSteps().then((f) => {
@@ -57,10 +61,29 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
       setSets(copy(f.sets))
       setDirty(false)
       setError(null)
+      setConflict(null)
+      setChangedElsewhere(false)
       setSelected((i) => Math.min(i, Math.max(0, f.sets.length - 1)))
     })
   }
   useEffect(load, [])
+  // Saved on another machine (or the host's window): reload, unless there are unsaved edits here.
+  useEffect(
+    () =>
+      window.nightShift.onStepsChanged?.(() => {
+        if (dirtyRef.current) setChangedElsewhere(true)
+        else load()
+      }),
+    []
+  )
+
+  // After a clash: keep the edits on screen and take the latest revisions, so the next Save applies them.
+  async function keepMine(): Promise<void> {
+    const latest = await window.nightShift.getSteps()
+    setFile(latest)
+    setConflict(null)
+    setChangedElsewhere(false)
+  }
   useEffect(() => setConfirmDelete(false), [selected])
 
   const current = sets[selected] as StepSet | undefined
@@ -156,11 +179,14 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
     setSaving(true)
     setError(null)
     try {
-      const res = await window.nightShift.saveSteps(sets)
+      const res = await window.nightShift.saveSteps(sets, file?.revs)
       if ('error' in res) {
-        setError(res.error ?? 'Could not save.')
+        if ('conflict' in res && res.conflict) setConflict(res.conflict)
+        else setError(res.error ?? 'Could not save.')
         return
       }
+      setConflict(null)
+      setChangedElsewhere(false)
       setFile(res)
       setSets(copy(res.sets))
       setDirty(false)
@@ -216,12 +242,28 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
           {!settings?.repoPath
             ? 'Set the repo path in Settings to save actions.'
             : file?.path
-              ? `Saved to ${file.path}. Commit it so changes go through a PR.`
+              ? settings.mode === 'remote'
+                ? `Saved on the host, in ${file.path}. Changes show on every machine straight away.`
+                : `Saved to ${file.path}. Commit it so changes go through a PR.`
               : `Using built-in defaults. Saving creates ${settings.repoPath}\\.nightshift\\steps.yml.`}
         </div>
         {file?.error && <div className="banner inline">{file.error}</div>}
         {file?.problems?.length && !dirty ? <div className="banner inline">{file.problems.join(' ')}</div> : null}
         {error && <div className="banner inline">{error}</div>}
+        {conflict && (
+          <div className="banner inline conflict" role="alert">
+            <span>{conflict.message}</span>
+            <span className="row-actions">
+              <button className="btn small" type="button" onClick={load}>
+                Load their version
+              </button>
+              <button className="btn small" type="button" onClick={() => void keepMine()} title="Keep your edits on screen; saving again replaces their version">
+                Keep my edits
+              </button>
+            </span>
+          </div>
+        )}
+        {changedElsewhere && !conflict && <div className="banner inline">Actions were changed on another machine while you were editing. Saving checks for clashes first.</div>}
 
         {!current && <div className="empty">No actions yet. Create one to get started.</div>}
 

@@ -802,3 +802,13 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .start-menu .issue-menu-item:hover { background: var(--hover); }
 .start-menu .issue-menu-item .hint { margin-left: auto; font-size: 11px; color: var(--ok); }
 .global-tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); border: 1px solid var(--accent-soft-line); border-radius: 4px; padding: 0 5px; margin-left: 6px; }
+
+/* Remote mode: which host this machine uses, green when connected */
+.remote-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border: 1px solid var(--line-3); border-radius: 999px; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.remote-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.remote-chip.down .dot { background: var(--bad); }
+.remote-chip.down { color: var(--text); border-color: var(--bad); }
+
+/* A save refused because the same item changed on another machine */
+.banner.conflict { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.banner.conflict .row-actions { display: inline-flex; gap: 8px; }

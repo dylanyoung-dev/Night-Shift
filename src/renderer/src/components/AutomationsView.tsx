@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Automation, AutomationStatus, LinearState, Settings, StepsFile } from '../../../shared/types'
 import { StatusIcon } from './LinearIcons'
+import ConflictBanner from './ConflictBanner'
 
 interface Props {
   settings: Settings
@@ -64,6 +65,8 @@ const copy = (list: Automation[]): Automation[] => JSON.parse(JSON.stringify(lis
 
 export default function AutomationsView({ settings, states, onSaved }: Props): JSX.Element {
   const [list, setList] = useState<Automation[]>(() => copy(settings.automations))
+  const [baseRevs, setBaseRevs] = useState(settings.sharedRevs) // revisions of what's being edited
+  const [conflict, setConflict] = useState<string | null>(null)
   const [selected, setSelected] = useState(0)
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -86,7 +89,10 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
 
   // Main may switch an automation off (it finished its runs); pick that up if nothing is being edited.
   useEffect(() => {
-    if (!dirty) setList(copy(settings.automations))
+    if (!dirty) {
+      setList(copy(settings.automations))
+      setBaseRevs(settings.sharedRevs)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.automations])
 
@@ -134,8 +140,14 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
   async function save(): Promise<void> {
     setSaving(true)
     try {
-      const s = await window.nightShift.saveSettings({ automations: list })
+      const s = await window.nightShift.saveSettings({ automations: list, sharedRevs: baseRevs })
       onSaved(s)
+      if (s.saveError) {
+        setConflict(s.saveError.message)
+        return
+      }
+      setConflict(null)
+      setBaseRevs(s.sharedRevs)
       setList(copy(s.automations))
       setDirty(false)
       setMessage('Saved')
@@ -193,6 +205,13 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
           <h1>{current?.name || 'Automations'}</h1>
           {dirty && <span className="chip warn-chip">Unsaved changes</span>}
           {!dirty && message && <span className="note">{message}</span>}
+          {conflict && (
+            <ConflictBanner
+              message={conflict}
+              onLoadTheirs={() => (setList(copy(settings.automations)), setBaseRevs(settings.sharedRevs), setDirty(false), setConflict(null))}
+              onKeepMine={() => (setBaseRevs(settings.sharedRevs), setConflict(null))}
+            />
+          )}
           <div className="right">
             {dirty && (
               <button className="btn" type="button" disabled={saving} onClick={() => (setList(copy(settings.automations)), setDirty(false))}>

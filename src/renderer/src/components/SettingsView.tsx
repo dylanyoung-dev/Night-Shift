@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_HOST_PORT, DEFAULT_WORKTREE_PATH, type HostSettings, type HostStatus, type ImportGroupKey, type ImportPreview, type RepoBranches, type Settings, type UpdateState } from '../../../shared/types'
+import ConflictBanner from './ConflictBanner'
+import { DEFAULT_HOST_PORT, DEFAULT_WORKTREE_PATH, type HostSettings, type HostStatus, type ImportGroupKey, type RemoteStatus, type ImportPreview, type RepoBranches, type Settings, type UpdateState } from '../../../shared/types'
 
 // Mirrors resolveWorktreePath in the main process, for the example under the field.
 function previewPath(template: string, repo: string): string {
@@ -18,13 +19,15 @@ interface Props {
 
 const STATE_TYPES = ['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled']
 
-const SECTIONS = [
+const ALL_SECTIONS = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'linear', label: 'Linear' },
-  { id: 'repo', label: 'Repository' },
-  { id: 'worktrees', label: 'Worktrees' },
-  { id: 'runs', label: 'Runs' },
-  { id: 'host', label: 'Host' },
+  { id: 'remote', label: 'Remote' },
+  { id: 'repo', label: 'Repository', local: true },
+  { id: 'worktrees', label: 'Worktrees', local: true },
+  { id: 'runs', label: 'Runs', local: true },
+  { id: 'hostmachine', label: 'Host machine', remote: true },
+  { id: 'host', label: 'Host', local: true },
   { id: 'sharing', label: 'Share settings' },
   { id: 'about', label: 'About' }
 ]
@@ -35,6 +38,8 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
   const [saved, setSaved] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [active, setActive] = useState('appearance')
+  const remote = settings.mode === 'remote' // as saved; switching applies on Save
+  const SECTIONS = ALL_SECTIONS.filter((x) => (remote ? !x.local : !x.remote))
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Highlight the section nearest the top of the scroll area.
@@ -52,7 +57,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
     }
     root.addEventListener('scroll', onScroll, { passive: true })
     return () => root.removeEventListener('scroll', onScroll)
-  }, [])
+  }, [remote])
   const [repo, setRepo] = useState<RepoBranches | null>(null)
   const [fetching, setFetching] = useState(false)
 
@@ -89,6 +94,29 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
   const baseKnown = branchNames.includes(form.baseBranch)
   const baseOnOrigin = repo?.branches.some((b) => b.name === form.baseBranch && b.remote) ?? false
 
+  // Remote mode: live connection status, and a test before switching.
+  const [remoteStatus, setRemoteStatus] = useState<RemoteStatus | null>(null)
+  const [remoteTest, setRemoteTest] = useState<{ text: string; ok: boolean } | null>(null)
+  const [testing, setTesting] = useState(false)
+  useEffect(() => {
+    void window.nightShift.getRemoteStatus?.().then(setRemoteStatus)
+    return window.nightShift.onRemoteStatus?.(setRemoteStatus)
+  }, [])
+  // "dylandesktop.tail1a8202.ts.net:47615" pasted into the host box fills in both fields.
+  function setRemoteHost(value: string): void {
+    const m = /^(?:https?:\/\/)?([^\s/:]+):(\d{2,5})\/?$/.exec(value.trim())
+    set('remote', m ? { host: m[1], port: Number(m[2]) } : { ...form.remote, host: value.trim() })
+    setRemoteTest(null)
+  }
+  async function testRemote(): Promise<void> {
+    if (!window.nightShift.testRemote) return
+    setTesting(true)
+    const r = await window.nightShift.testRemote(form.remote)
+    setTesting(false)
+    setRemoteTest('error' in r ? { text: r.error, ok: false } : { text: `Connected to ${r.name} · Night Shift ${r.appVersion}`, ok: true })
+  }
+  const [conflict, setConflict] = useState<string | null>(null)
+
   // Host: status comes live from the main process; the settings apply on Save.
   const [hostStatus, setHostStatus] = useState<HostStatus | null>(null)
   const [hostLogins, setHostLogins] = useState(settings.host.allowedLogins.join(', '))
@@ -114,6 +142,13 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
     const { hasLinearKey: _ignored, activeProjectId: _active, ...rest } = form
     const s = await window.nightShift.saveSettings({ ...rest, ...(apiKey ? { linearApiKey: apiKey } : {}) })
     setApiKey('')
+    if (s.saveError) {
+      // Shared settings clashed with an edit elsewhere: nothing shared was saved; keep the form as typed.
+      setConflict(s.saveError.message)
+      onSaved(s)
+      return
+    }
+    setConflict(null)
     setForm({ ...s })
     setHostLogins(s.host.allowedLogins.join(', '))
     setDirtyHost(false)
@@ -179,6 +214,13 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
         <h1>Settings</h1>
         <div className="right">
           {dirty ? <span className="chip warn-chip">Unsaved changes</span> : saved && <span className="note">Saved</span>}
+          {conflict && (
+            <ConflictBanner
+              message={conflict}
+              onLoadTheirs={() => (setForm({ ...settings }), setDirty(false), setConflict(null))}
+              onKeepMine={() => (setForm((f) => ({ ...f, sharedRevs: settings.sharedRevs })), setConflict(null))}
+            />
+          )}
           <button className="btn primary" type="button" disabled={!dirty && !apiKey} onClick={() => void save()}>
             Save settings
           </button>
@@ -240,6 +282,18 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
               <input className="input" value={form.linearTeamKey} onChange={(e) => set('linearTeamKey', e.target.value.trim())} />
             </label>
             <label className="field">
+              Reload the board from Linear every (minutes)
+              <input
+                className="input"
+                type="number"
+                min={1}
+                max={120}
+                value={form.boardRefreshMinutes}
+                onChange={(e) => set('boardRefreshMinutes', Number(e.target.value) || 5)}
+              />
+              <span className="note">This machine only. The arrows next to Run action reload it now.</span>
+            </label>
+            <label className="field">
               Automations check Linear every (seconds)
               <input
                 className="input"
@@ -248,6 +302,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
                 value={form.pollSeconds}
                 onChange={(e) => set('pollSeconds', Number(e.target.value) || 60)}
               />
+              <span className="note">{remote ? 'Shared: automations run on the host.' : 'Shared with remotes. Automations only run on this machine.'}</span>
             </label>
             <div className="field wide">
               Hide these Linear state types from the board
@@ -284,6 +339,107 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
             </div>
           </div>
         </section>
+        <section id="remote" className="settings-section" aria-labelledby="remote-title">
+          <div className="section-side">
+            <h2 id="remote-title">Remote</h2>
+            <p className="section-intro">
+              Use Night Shift on another machine (the host) over Tailscale. Agents, runs, actions and automations stay on the host; this machine shows them and can start, stop and edit them.
+            </p>
+          </div>
+          <div className="form">
+            <label className="check-row field wide">
+              <input
+                type="checkbox"
+                checked={form.mode === 'remote'}
+                disabled={form.host.enabled}
+                onChange={(e) => {
+                  set('mode', e.target.checked ? 'remote' : 'local')
+                  setRemoteTest(null)
+                }}
+              />
+              <span>
+                <strong>Use another machine as the host</strong>
+                <span className="sub">
+                  {form.host.enabled
+                    ? 'Turn off "This machine is the host" first.'
+                    : 'This machine stops running agents and automations of its own. The board still comes straight from Linear with this machine\'s key.'}
+                </span>
+              </span>
+            </label>
+            <label className="field">
+              Host
+              <input
+                className="input"
+                value={form.remote.host}
+                placeholder="dylandesktop.tail1a8202.ts.net"
+                onChange={(e) => setRemoteHost(e.target.value)}
+              />
+              <span className="note">Its Tailscale name, as shown in the host's Settings › Host. Pasting name:port fills in both.</span>
+            </label>
+            <label className="field">
+              Port
+              <input
+                className="input"
+                type="number"
+                min={1}
+                max={65535}
+                value={form.remote.port}
+                onChange={(e) => (set('remote', { ...form.remote, port: Number(e.target.value) || DEFAULT_HOST_PORT }), setRemoteTest(null))}
+              />
+            </label>
+            <div className="field wide" role="status">
+              <div className="inputrow">
+                <button className="btn small" type="button" disabled={!form.remote.host || testing} onClick={() => void testRemote()}>
+                  {testing ? 'Testing…' : 'Test connection'}
+                </button>
+                {remoteTest && <span className={remoteTest.ok ? 'note' : 'note warn-text'}>{remoteTest.text}</span>}
+              </div>
+              {remote && remoteStatus && (
+                <span className="note">
+                  {remoteStatus.state === 'connected'
+                    ? `Connected to ${remoteStatus.name ?? remoteStatus.host} (Night Shift ${remoteStatus.appVersion ?? '?'}).`
+                    : remoteStatus.state === 'connecting'
+                      ? `Connecting to ${remoteStatus.host}…`
+                      : remoteStatus.state === 'incompatible'
+                        ? remoteStatus.error
+                        : `Can't reach ${remoteStatus.name ?? remoteStatus.host}${remoteStatus.since ? ` since ${new Date(remoteStatus.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}. Trying again every 10 seconds.`}
+                </span>
+              )}
+              {(form.mode !== settings.mode || form.remote.host !== settings.remote.host || form.remote.port !== settings.remote.port) && (
+                <span className="note">Save settings to switch. The window reloads.</span>
+              )}
+            </div>
+          </div>
+        </section>
+        {remote && (
+          <section id="hostmachine" className="settings-section" aria-labelledby="hostmachine-title">
+            <div className="section-side">
+              <h2 id="hostmachine-title">Host machine</h2>
+              <p className="section-intro">Set on the host. Shown here for reference.</p>
+            </div>
+            <div className="form">
+              <div className="field wide">
+                Repository
+                <span className="mono">{settings.repoPath || '(not set on the host)'}</span>
+              </div>
+              <div className="field wide">
+                Base branch
+                <input className="input" value={form.baseBranch} onChange={(e) => set('baseBranch', e.target.value.trim())} />
+                <span className="note">Shared: new worktrees and global actions on the host start from it.</span>
+              </div>
+              <div className="field wide">
+                Worktree path
+                <span className="mono">{settings.worktreePath}</span>
+              </div>
+              <div className="field">
+                Max runs at once
+                <span className="mono">{settings.maxConcurrent}</span>
+              </div>
+            </div>
+          </section>
+        )}
+        {!remote && (
+          <>
         <section id="repo" className="settings-section" aria-labelledby="repo-title">
           <div className="section-side">
             <h2 id="repo-title">Repository</h2>
@@ -442,6 +598,9 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
             </label>
           </div>
         </section>
+          </>
+        )}
+        {!remote && (
         <section id="host" className="settings-section" aria-labelledby="host-title">
           <div className="section-side">
             <h2 id="host-title">Host</h2>
@@ -451,7 +610,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
           </div>
           <div className="form">
             <label className="check-row field wide">
-              <input type="checkbox" checked={form.host.enabled} onChange={(e) => setHost({ enabled: e.target.checked })} />
+              <input type="checkbox" checked={form.host.enabled} disabled={form.mode === "remote"} onChange={(e) => setHost({ enabled: e.target.checked })} />
               <span>
                 <strong>This machine is the host</strong>
                 <span className="sub">Listens on this machine's Tailscale address only, never on your local network or the internet.</span>
@@ -523,6 +682,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
             </div>
           </div>
         </section>
+        )}
         <section id="sharing" className="settings-section" aria-labelledby="sharing-title">
           <div className="section-side">
             <h2 id="sharing-title">Share settings</h2>
@@ -646,10 +806,22 @@ function AboutVersion(): JSX.Element {
           {u ? u.version : 'Restart Night Shift to see the version.'}
         </span>
         <span className="note">{status}</span>
-        {u?.status === 'ready' && (
+        {u?.status === 'ready' ? (
           <button className="btn small primary" type="button" onClick={() => void window.nightShift.installUpdate?.()}>
             Restart to update
           </button>
+        ) : (
+          u &&
+          u.status !== 'dev' && (
+            <button
+              className="btn small"
+              type="button"
+              disabled={u.status === 'checking' || u.status === 'downloading' || !window.nightShift.checkForUpdates}
+              onClick={() => void window.nightShift.checkForUpdates?.().then(setU)}
+            >
+              {u.status === 'checking' ? 'Checking…' : 'Check for updates'}
+            </button>
+          )
         )}
       </div>
     </div>

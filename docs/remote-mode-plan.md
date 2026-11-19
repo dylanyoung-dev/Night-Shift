@@ -1,6 +1,6 @@
 # Plan: host and remote over Tailscale
 
-Status: **approved on 2026-11-18, with the additions in section 8. Build step 1 is done; waiting for your laptop test (section 7, step 0).** This replaces the Cloudflare design in [two-machine-plan.md](two-machine-plan.md), which is kept for reference only. Items marked **OPEN** are unverified or need a decision.
+Status: **approved on 2026-11-18, with the additions in section 8. Build steps 1 and 2 are done. Your laptop test of step 1 passed on 2026-11-18 (T1, T2). Step 2 is waiting for your end-to-end test (section 7, steps 2 to 4).** This replaces the Cloudflare design in [two-machine-plan.md](two-machine-plan.md), which is kept for reference only. Items marked **OPEN** are unverified or need a decision.
 
 ## The idea in one paragraph
 
@@ -91,6 +91,7 @@ Each item carries a `rev`. Every write must send `If-Match: <rev>` (see section 
 
 ## 3. Editing from two places without overwriting
 
+- **As built:** the Actions, Automations, Projects and Settings pages still save their whole list or form, with the revisions they loaded (`POST /v1/actions`, `POST /v1/shared`). The host then merges item by item. That gives the same result as one route per item: only items you changed are written, and a clash on any of them refuses the save.
 - **Each item has a revision.**
   - Actions, automations, projects and each shared setting have a `rev`: a short hash of that item's current content as the host has it.
   - For actions, that's what's in `steps.yml` right now, so hand edits and `git pull` are noticed too.
@@ -251,7 +252,7 @@ You run these yourself. Step 0 works with build step 1. Steps 2.4, 3 and 4 need 
 
 ### 2. Host (desktop)
 
-1. **Turn on hosting.** In Night Shift, **Settings › This machine is the host**:
+1. **Turn on hosting.** In Night Shift, **Settings › Host › This machine is the host**:
    1. turn it on;
    2. check the name, and set the port (default 47615);
    3. choose **Save**.
@@ -287,8 +288,8 @@ You run these yourself. Step 0 works with build step 1. Steps 2.4, 3 and 4 need 
 ### 3. Remote (laptop)
 
 1. **Install Night Shift** from `https://nightshift-updates.dylanyoung.dev/download/NightShiftSetup.exe`.
-2. **Point it at the host.** In **Settings › Mode**:
-   1. choose **Remote**;
+2. **Point it at the host.** In **Settings › Remote**:
+   1. tick **Use another machine as the host**;
    2. paste `dylandesktop.tail1a8202.ts.net:47615`, or type `dylandesktop` and the port;
    3. choose **Test connection**. Expect "Connected to dylandesktop · Night Shift 0.x".
 3. **Add the laptop's own Linear API key**, for the board.
@@ -327,7 +328,9 @@ Any one of these is enough:
    - `GET /v1/host`.
 
    Code: `src/main/hostServer.ts`, wired in `src/main/index.ts`, with the Settings section in `SettingsView.tsx`.
-2. **After your laptop test passes:**
+2. **Done after your laptop test passed:** everything below. A scratch test outside the repo covers it: 31 checks against real Tailscale on the desktop: routes, the event stream, conflicts, R1, offline and reconnect.
+
+   What it covers:
    - the rest of the API, with `/events` and conflict checks;
    - remote mode in the app, including the per-machine board refresh interval;
    - headless start (`--headless` with the single-instance window);
@@ -339,7 +342,7 @@ Any one of these is enough:
   - it auto-updates like the laptop;
   - restarting or breaking a development session doesn't take the host down.
 - **Development stays on `npm run dev`, with one thing to know.** The installed app and the dev app use the **same data folder**, `%APPDATA%\night-shift`. Running both at once would mean two copies running agents on the same `runs.json`.
-  - Until headless mode and the single-instance lock are built, stop the installed host before `npm run dev` with this machine's data.
+  - Only one copy runs per data folder (single-instance lock). If the installed host is running, `npm run dev` with this machine's data quits at once and brings up the installed copy's window instead. For development alongside the host, use a separate folder (below).
   - Or run dev against a separate folder: `$env:NIGHTSHIFT_USER_DATA="$env:APPDATA\night-shift-dev"; npm run dev`. The app already supports that variable.
 - **For step 0 only, the host is `npm run dev`.** That's why step 0.4's firewall rule has no `-Program`. Step 2.3 replaces it with the installed-exe version.
 - **Not verified:** the installed exe path. Night Shift isn't installed on this desktop. The installer is per user, so it should be under `%LOCALAPPDATA%\Programs\`; the runbook finds it with `Get-ChildItem` rather than assuming.
@@ -347,3 +350,17 @@ Any one of these is enough:
 **R1:** no fallback. A continue on a run whose Claude session is gone fails with a clear message on the remote and the host (section 2).
 
 **Board refresh:** each machine has its own board refresh interval for Linear, default 5 minutes. The shared `pollSeconds` is for automations on the host only (sections 4 and 5).
+
+**Step 2 notes (2026-11-18)**
+- **Tray icon.** When this machine is the host, or was started with `--headless`, closing the window leaves Night Shift running, with a tray icon offering **Open Night Shift** and **Quit Night Shift**.
+- **Automations on a remote.** A remote never runs automations: the scheduler's tick is skipped in remote mode.
+- **What a remote keeps on disk.** It keeps a copy of the shared team key and projects in its own settings, so the board still loads while the host is off. It never keeps automations, so switching back to local mode can't start running the host's automations here.
+- **Not on a remote:**
+  - "Open log file" and "Open steps file", because the files are on the host. The log view shows the whole log.
+  - The branch picker, because branches belong to the host's repo. The base branch can still be changed in Settings › Host machine.
+- **Settings export and import** are unchanged so far: they still include projects and automations. **OPEN:** limit them to local settings, as planned in section 4.
+- **Not tested yet, needs your machines:**
+  - remote mode in the app itself;
+  - headless start at sign-in;
+  - the tray icon;
+  - opening a second copy.

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { globalRunKey, isActiveRun, orderStates, setLabel, type BoardData, type IssueUpdate, type LinearIssue, type Run, type Settings, type StepChoice, type StepsFile } from '../../shared/types'
+import { globalRunKey, isActiveRun, orderStates, setLabel, type BoardData, type IssueUpdate, type RemoteStatus, type LinearIssue, type Run, type Settings, type StepChoice, type StepsFile } from '../../shared/types'
 import Sidebar, { View } from './components/Sidebar'
 import Board, { clearRelationsCache } from './components/Board'
 import RunPanel from './components/RunPanel'
@@ -77,6 +77,18 @@ export default function App(): JSX.Element {
     }
   }
   const [steps, setSteps] = useState<StepsFile | null>(null)
+  // Remote mode: the host this machine uses, and whether it's reachable right now.
+  const [remoteStatus, setRemoteStatus] = useState<RemoteStatus | null>(null)
+  const isRemote = settings?.mode === 'remote'
+  const hostName = remoteStatus?.name ?? remoteStatus?.host ?? 'the host'
+  const hostDown = isRemote && remoteStatus?.state !== 'connected'
+  const hostDownText = !isRemote
+    ? ''
+    : remoteStatus?.state === 'incompatible'
+      ? remoteStatus.error ?? 'The host runs a different version of Night Shift.'
+      : remoteStatus?.state === 'connecting' || !remoteStatus
+        ? `Connecting to ${hostName}…`
+        : `Can't reach ${hostName}${remoteStatus.since ? ` since ${new Date(remoteStatus.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}. Runs, actions and automations are paused here until it's back; the board still works. Trying again every 10 seconds.`
   const [startMenu, setStartMenu] = useState(false)
   const [switchingTo, setSwitchingTo] = useState<string | null>(null) // project name while its tickets load
   const columnOrder = settings?.columnOrder ?? []
@@ -117,11 +129,14 @@ export default function App(): JSX.Element {
   useEffect(() => {
     void api.getSettings().then((s) => {
       setSettings(s)
-      if (!s.hasLinearKey || !s.repoPath) setView('settings')
+      if (!s.hasLinearKey || (!s.repoPath && s.mode !== 'remote')) setView('settings')
     })
     void api.getBoard().then(setBoard)
     void api.getRuns().then(setRuns)
     const offSettings = api.onSettings(setSettings) // e.g. an automation switched itself off
+    void api.getRemoteStatus?.().then(setRemoteStatus)
+    const offRemote = api.onRemoteStatus?.(setRemoteStatus)
+    const offSteps = api.onStepsChanged?.(() => void api.getSteps().then(setSteps)) // changed on another machine
     const offOpenRun = api.onOpenRun((runId) => setLogRunId(runId)) // a notification was clicked
     const offBoard = api.onBoard((b) => {
       setBoard(b)
@@ -133,6 +148,8 @@ export default function App(): JSX.Element {
     )
     const timer = setInterval(() => setTick((t) => t + 1), 1000) // keeps durations moving
     return () => {
+      offRemote?.()
+      offSteps?.()
       offBoard()
       offSettings()
       offOpenRun()
@@ -205,6 +222,7 @@ export default function App(): JSX.Element {
 
   async function startGlobal(name: string): Promise<void> {
     setStartMenu(false)
+    if (hostDown) return setMessage(hostDownText)
     if (!api.startGlobalRun) return setMessage('Restart Night Shift to run global actions.')
     const res = await api.startGlobalRun(name)
     if ('error' in res) return setMessage(res.error)
@@ -214,6 +232,10 @@ export default function App(): JSX.Element {
 
   async function start(issueId: string, setName?: string): Promise<Run | null> {
     setStartMenu(false)
+    if (hostDown) {
+      setMessage(hostDownText)
+      return null
+    }
     const res = await api.startRun(issueId, setName)
     if ('error' in res) {
       setMessage(res.error)
@@ -260,13 +282,24 @@ export default function App(): JSX.Element {
         <>
           <div className="main">
             <header className="topbar">
-              {settings && (
+              {settings && !isRemote && (
                 <BranchPicker
                   repoPath={settings.repoPath}
                   baseBranch={settings.baseBranch}
                   label={board.project ? board.project.name : `All of team ${settings.linearTeamKey}`}
-                  onChange={(branch) => void api.saveSettings({ baseBranch: branch }).then(setSettings)}
+                  onChange={(branch) => void api.saveSettings({ baseBranch: branch, sharedRevs: settings.sharedRevs }).then(setSettings)}
                 />
+              )}
+              {settings && isRemote && (
+                <span className="status" title="The base branch is set in Settings › Host machine">
+                  {board.project ? board.project.name : `All of team ${settings.linearTeamKey}`} · {settings.baseBranch || 'no base branch'}
+                </span>
+              )}
+              {isRemote && (
+                <span className={`remote-chip${hostDown ? ' down' : ''}`} title={hostDown ? hostDownText : `Runs, actions and automations come from ${hostName}`}>
+                  <span className="dot" aria-hidden="true" />
+                  Remote · {hostName}
+                </span>
               )}
               {switchingTo && <span className="status">Loading {switchingTo}…</span>}
               {needsYou.length > 0 && (
@@ -282,7 +315,7 @@ export default function App(): JSX.Element {
               )}
               <span className="status">
                 <span className="dot" style={{ background: runningCount ? 'var(--ok)' : 'var(--idle)' }} />
-                Local {runningCount} of {settings?.maxConcurrent ?? 0} running{queuedCount ? ` · ${queuedCount} queued` : ''}
+                {isRemote ? `On ${hostName}:` : 'Local'} {runningCount} of {settings?.maxConcurrent ?? 0} running{queuedCount ? ` · ${queuedCount} queued` : ''}
               </span>
               <span className="status">
                 {board.fetchedAt ? `Synced ${new Date(board.fetchedAt).toLocaleTimeString()}` : 'Not synced yet'}
@@ -302,11 +335,13 @@ export default function App(): JSX.Element {
                   <button
                     className="btn primary"
                     type="button"
-                    disabled={!globalActions.length}
+                    disabled={!globalActions.length || hostDown}
                     aria-haspopup="menu"
                     aria-expanded={startMenu}
                     title={
-                      globalActions.length
+                      hostDown
+                        ? `Host offline: ${hostName}`
+                        : globalActions.length
                         ? `Run a global action from ${settings?.baseBranch || 'the base branch'}`
                         : 'No global actions yet. Make one on the Actions page and mark it Global.'
                     }
@@ -338,6 +373,7 @@ export default function App(): JSX.Element {
                 </span>
               </div>
             </header>
+            {hostDown && <div className="banner">{hostDownText}</div>}
             {board.error && <div className="banner">{board.error}</div>}
             {message && <div className="banner">{message}</div>}
             <FilterBar

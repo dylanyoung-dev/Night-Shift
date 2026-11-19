@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { LinearProject, NightShiftProject, Settings } from '../../../shared/types'
+import ConflictBanner from './ConflictBanner'
 
 interface Props {
   settings: Settings
@@ -15,6 +16,8 @@ function copy(p: NightShiftProject[]): NightShiftProject[] {
 // Night Shift projects: named slices of the team's tickets, each linked to Linear projects.
 export default function ProjectsView({ settings, linearProjects, onSaved, onShow }: Props): JSX.Element {
   const [projects, setProjects] = useState<NightShiftProject[]>(() => copy(settings.projects))
+  const [baseRevs, setBaseRevs] = useState(settings.sharedRevs) // revisions of what's being edited
+  const [conflict, setConflict] = useState<string | null>(null)
   const [selected, setSelected] = useState(() => Math.max(0, settings.projects.findIndex((p) => p.id === settings.activeProjectId)))
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -62,6 +65,8 @@ export default function ProjectsView({ settings, linearProjects, onSaved, onShow
 
   function discard(): void {
     setProjects(copy(settings.projects))
+    setBaseRevs(settings.sharedRevs)
+    setConflict(null)
     setSelected((i) => Math.min(i, Math.max(0, settings.projects.length - 1)))
     setDirty(false)
   }
@@ -69,8 +74,14 @@ export default function ProjectsView({ settings, linearProjects, onSaved, onShow
   async function save(): Promise<void> {
     setSaving(true)
     try {
-      const s = await window.nightShift.saveSettings({ projects })
+      const s = await window.nightShift.saveSettings({ projects, sharedRevs: baseRevs })
       onSaved(s)
+      if (s.saveError) {
+        setConflict(s.saveError.message)
+        return
+      }
+      setConflict(null)
+      setBaseRevs(s.sharedRevs)
       setProjects(copy(s.projects))
       setDirty(false)
       setSaved(true)
@@ -109,6 +120,7 @@ export default function ProjectsView({ settings, linearProjects, onSaved, onShow
           <h1>{current?.name || 'Projects'}</h1>
           {dirty && <span className="chip warn-chip">Unsaved changes</span>}
           {saved && !dirty && <span className="note">Saved</span>}
+          {conflict && <ConflictBanner message={conflict} onLoadTheirs={discard} onKeepMine={() => (setBaseRevs(settings.sharedRevs), setConflict(null))} />}
           <div className="right">
             {dirty && (
               <button className="btn" type="button" onClick={discard} disabled={saving}>

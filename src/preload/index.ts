@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
-import type { AutomationStatus, BoardData, HostStatus, NightShiftApi, PlanLimits, UpdateState, Run, Settings, SettingsUpdate } from '../shared/types'
+import type { AutomationStatus, BoardData, HostStatus, RemoteStatus, NightShiftApi, PlanLimits, UpdateState, Run, Settings, SettingsUpdate } from '../shared/types'
 
 function listen<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
   const handler = (_e: IpcRendererEvent, ...args: unknown[]): void => cb(...(args as T))
@@ -16,7 +16,8 @@ const api: NightShiftApi = {
   getBoard: () => ipcRenderer.invoke('board:get'),
   refreshBoard: () => ipcRenderer.invoke('board:refresh'),
   getSteps: () => ipcRenderer.invoke('steps:get'),
-  saveSteps: (sets) => ipcRenderer.invoke('steps:save', sets),
+  saveSteps: (sets, revs) => ipcRenderer.invoke('steps:save', sets, revs),
+  onStepsChanged: (cb) => listen<[]>('steps-changed', cb),
   openStepsFile: () => ipcRenderer.invoke('steps:open'),
   getRuns: () => ipcRenderer.invoke('runs:get'),
   startRun: (issueId: string, setName?: string) => ipcRenderer.invoke('runs:start', issueId, setName),
@@ -30,10 +31,14 @@ const api: NightShiftApi = {
   getUsage: (days: number, refresh?: boolean) => ipcRenderer.invoke('usage:get', days, refresh),
   getTicketStats: (days: number) => ipcRenderer.invoke('usage:tickets', days),
   getHostStatus: () => ipcRenderer.invoke('host:status'),
+  getRemoteStatus: () => ipcRenderer.invoke('remote:status'),
+  onRemoteStatus: (cb) => listen<[RemoteStatus]>('remote', cb),
+  testRemote: (target) => ipcRenderer.invoke('remote:test', target),
   onHostStatus: (cb) => listen<[HostStatus]>('host', cb),
   getUpdateState: () => ipcRenderer.invoke('update:state'),
   onUpdateState: (cb) => listen<[UpdateState]>('update', cb),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
   getIssueDetail: (issueId: string) => ipcRenderer.invoke('issue:detail', issueId),
   getIssueRelations: (issueId: string) => ipcRenderer.invoke('issue:relations', issueId),
   linearImage: (url: string) => ipcRenderer.invoke('linear:image', url),

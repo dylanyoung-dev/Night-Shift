@@ -23,7 +23,10 @@ const defaults: Stored = {
   activeProjectId: null,
   automations: [],
   theme: 'system',
-  host: { enabled: false, name: '', port: DEFAULT_HOST_PORT, allowedLogins: [] }
+  host: { enabled: false, name: '', port: DEFAULT_HOST_PORT, allowedLogins: [] },
+  mode: 'local',
+  remote: { host: '', port: DEFAULT_HOST_PORT },
+  boardRefreshMinutes: 5
 }
 
 let cache: Stored | null = null
@@ -150,6 +153,15 @@ export function updateSettings(update: SettingsUpdate): Settings {
   s.automations = cleanAutomations(s.automations, s.projects)
   if (s.theme !== 'dark' && s.theme !== 'light') s.theme = 'system'
   s.host = cleanHost(s.host)
+  s.mode = s.mode === 'remote' ? 'remote' : 'local'
+  const rport = Number(s.remote?.port)
+  s.remote = {
+    host: String(s.remote?.host ?? '').trim().replace(/^https?:\/\//, '').replace(/[:/].*$/, ''),
+    port: Number.isInteger(rport) && rport >= 1 && rport <= 65535 ? rport : DEFAULT_HOST_PORT
+  }
+  s.boardRefreshMinutes = clamp(s.boardRefreshMinutes, 1, 120, 5)
+  delete (s as Partial<Settings>).sharedRevs
+  delete (s as Partial<Settings>).saveError
   s.columnOrder = Array.isArray(s.columnOrder) ? [...new Set(s.columnOrder.map(String).filter(Boolean))] : []
   if (linearApiKey !== undefined) {
     delete s.linearApiKeyEnc

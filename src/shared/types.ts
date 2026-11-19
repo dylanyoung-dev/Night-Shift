@@ -103,6 +103,27 @@ export interface HostStatus {
   lastCaller?: { device: string; at: number }
 }
 
+// Remote mode: this machine uses another machine's Night Shift (the host) over Tailscale.
+export interface RemoteTarget {
+  host: string // MagicDNS name or Tailscale IP, e.g. dylandesktop.tail1a8202.ts.net
+  port: number
+}
+export interface RemoteStatus {
+  state: 'off' | 'connecting' | 'connected' | 'offline' | 'incompatible'
+  host: string
+  port: number
+  name?: string // the host's name, once it answered
+  appVersion?: string
+  since?: number // offline: when it was last reachable (or when trying started)
+  error?: string
+}
+
+// Items edited from more than one machine, kept on the host.
+export interface SaveConflict {
+  message: string
+  items: { kind: 'action' | 'automation' | 'project' | 'setting'; key: string; name: string; by?: string; at?: number }[]
+}
+
 export interface Settings {
   linearTeamKey: string // e.g. "IGN"
   repoPath: string // local checkout of the repo agents work in
@@ -118,8 +139,18 @@ export interface Settings {
   automations: Automation[]
   theme: 'system' | 'dark' | 'light' // this machine only; not in the exported file
   host: HostSettings // this machine only; not in the exported file
+  mode: 'local' | 'remote' // remote: actions, runs and shared settings come from the host
+  remote: RemoteTarget // the host, in remote mode
+  boardRefreshMinutes: number // this machine: how often the board reloads from Linear
+  // Not stored; filled in when settings are read.
+  sharedRevs?: Record<string, string> // revisions of the shared items, sent back with a save
+  saveError?: { message: string; conflict?: SaveConflict } // the last save was refused (shared items)
   hasLinearKey: boolean // the key itself never leaves the main process
 }
+
+// The settings every machine shares (one copy, on the host), and the host machine's own.
+export type SharedSettings = Pick<Settings, 'linearTeamKey' | 'baseBranch' | 'worktreeMode' | 'pollSeconds' | 'projects' | 'automations'>
+export type HostMachineSettings = Pick<Settings, 'repoPath' | 'worktreePath' | 'maxConcurrent'>
 
 export interface SettingsUpdate extends Partial<Omit<Settings, 'hasLinearKey'>> {
   linearApiKey?: string
@@ -260,6 +291,7 @@ export interface StepsFile {
   sets: StepSet[]
   error?: string // the file couldn't be read; built-in defaults are in use
   problems?: string[] // the file loaded but has mistakes, e.g. a state in two sets
+  revs?: Record<string, string> // each action's revision, sent back with a save
 }
 
 export type StepStatus = 'pending' | 'running' | 'waiting' | 'done' | 'failed' | 'skipped'
@@ -507,7 +539,7 @@ export interface NightShiftApi {
   getBoard(): Promise<BoardData>
   refreshBoard(): Promise<BoardData>
   getSteps(): Promise<StepsFile>
-  saveSteps(sets: StepSet[]): Promise<StepsFile | { error: string }>
+  saveSteps(sets: StepSet[], revs?: Record<string, string>): Promise<StepsFile | { error: string; conflict?: SaveConflict }>
   openStepsFile(): Promise<void>
   getRuns(): Promise<Run[]>
   startRun(issueId: string, setName?: string): Promise<Run | { error: string }> // setName picks one of the state's sets
@@ -519,8 +551,13 @@ export interface NightShiftApi {
   replyToRun(runId: string, text: string): Promise<{ ok: true } | { error: string }>
   finishRunStep(runId: string): Promise<{ ok: true } | { error: string }> // end the Claude session, carry on
   getHostStatus?(): Promise<HostStatus>
+  getRemoteStatus?(): Promise<RemoteStatus>
+  onRemoteStatus?(cb: (s: RemoteStatus) => void): () => void
+  testRemote?(target: RemoteTarget): Promise<{ ok: true; name: string; appVersion: string; apiVersion: number } | { error: string }>
+  onStepsChanged?(cb: () => void): () => void // the actions changed (on the host, or another machine)
   onHostStatus?(cb: (s: HostStatus) => void): () => void
   getUpdateState?(): Promise<UpdateState>
+  checkForUpdates?(): Promise<UpdateState> // check the feed now (installed app only)
   onUpdateState?(cb: (s: UpdateState) => void): () => void
   installUpdate?(): Promise<void> // restart now and install the downloaded update
   getIssueDetail?(issueId: string): Promise<IssueDetail | { error: string }>

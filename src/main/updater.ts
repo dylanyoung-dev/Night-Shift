@@ -65,6 +65,16 @@ export function startUpdater(onChange: (s: UpdateState) => void): void {
   setInterval(check, EVERY)
 }
 
+// The About page's "Check for updates" button. Returns at once; progress comes through the state.
+export function checkForUpdatesNow(): UpdateState {
+  if (!app.isPackaged) return state // development builds don't update
+  if (state.status === 'checking' || state.status === 'downloading' || state.status === 'ready') return state
+  log.info('updater: checking now (asked from About)')
+  set({ status: 'checking', error: undefined })
+  check()
+  return state
+}
+
 export function installUpdateNow(): void {
   if (state.status !== 'ready') return
   log.info(`updater: restarting to install ${state.available}`)

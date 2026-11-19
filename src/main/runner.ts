@@ -1,8 +1,9 @@
 import { app } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
 import type { Writable } from 'stream'
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'fs'
 import { isAbsolute, join, normalize } from 'path'
+import { homedir, hostname } from 'os'
 import { CLAUDE_RUN_FLAGS, DEFAULT_WORKTREE_PATH, globalRunKey, isActiveRun, resumableStep, setLabel } from '../shared/types'
 import type { LinearIssue, Run, RunStep, StepDef, StepSet, WorktreeMode } from '../shared/types'
 import { ClaudeStreamFormatter, needsYou, parseClaudeCommand } from './claudeStream'
@@ -102,6 +103,19 @@ export class Runner {
     const from = resumableStep(run)
     if (from < 0) return { error: 'This run has no Claude session to pick up again.' }
     const src = run.steps[from]
+    // No fallback: if the session or its folder is gone, say so plainly (here and on a remote).
+    const gone = !src.sessionId || !claudeSessionExists(src.sessionId)
+      ? "This run's Claude session no longer exists"
+      : src.cwd && !existsSync(src.cwd)
+        ? `This run's folder (${src.cwd}) no longer exists`
+        : null
+    if (gone) {
+      const msg = `${gone} on ${hostname()}, so it can't be continued. Start the action again instead.`
+      this.log(run, `
+✗ Couldn't continue: ${msg}
+`)
+      return { error: msg }
+    }
     const def = this.deps.getSet(run.stepsName) ?? { name: run.stepsName, states: [], steps: [] }
     const rs: RunStep = { name: 'Reply', type: 'claude', status: 'running', startedAt: Date.now(), sessionId: src.sessionId, cwd: src.cwd }
     run.steps.push(rs)
@@ -616,4 +630,22 @@ function recoverSession(run: Run): void {
   } catch {
     /* no events or log: leave it */
   }
+}
+
+// Whether Claude Code still has this session's transcript (~/.claude/projects/<project>/<session>.jsonl).
+// --resume needs it; without it Claude starts over with no memory of the run.
+function claudeSessionExists(sessionId: string): boolean {
+  const env = process.env.CLAUDE_CONFIG_DIR
+  const roots = env ? env.split(',').map((x) => x.trim()).filter(Boolean) : [join(homedir(), '.claude'), join(homedir(), '.config', 'claude')]
+  for (const root of roots) {
+    const projects = join(root, 'projects')
+    let dirs: string[] = []
+    try {
+      dirs = readdirSync(projects)
+    } catch {
+      continue
+    }
+    for (const d of dirs) if (existsSync(join(projects, d, `${sessionId}.jsonl`))) return true
+  }
+  return false
 }
