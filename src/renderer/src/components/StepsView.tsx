@@ -12,7 +12,8 @@ interface Props {
 const NEW_STEP: Record<StepDef['type'], () => StepDef> = {
   script: () => ({ name: 'New script step', type: 'script', run: '', onFail: 'stop' }),
   claude: () => ({ name: 'Claude', type: 'claude', run: DEFAULT_CLAUDE_COMMAND, onFail: 'stop' }),
-  linear: () => ({ name: 'Move ticket', type: 'linear', moveTo: '', onFail: 'continue' })
+  linear: () => ({ name: 'Move ticket', type: 'linear', moveTo: '', onFail: 'continue' }),
+  cleanup: () => ({ name: 'Clean up worktrees', type: 'cleanup', onFail: 'stop' })
 }
 
 // What a Claude step needs to work unattended and show its progress live.
@@ -36,7 +37,7 @@ function missingFlags(run: string): { flags: string; why: string }[] {
 // A global action has no ticket, so its Claude step runs a skill on the whole repo.
 const GLOBAL_CLAUDE_COMMAND = `claude -p "/audit" ${CLAUDE_RUN_FLAGS}`
 
-const typeLabel: Record<StepDef['type'], string> = { script: 'Script', claude: 'Claude', linear: 'Linear' }
+const typeLabel: Record<StepDef['type'], string> = { script: 'Script', claude: 'Claude', linear: 'Linear', cleanup: 'Clean up worktrees' }
 
 function copy(sets: StepSet[]): StepSet[] {
   return JSON.parse(JSON.stringify(sets)) as StepSet[]
@@ -348,7 +349,9 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
               )}
             </section>
 
-            {current.global ? (
+            {current.global && current.steps.length > 0 && current.steps.every((st) => st.type === 'cleanup') ? (
+              <p className="note">Runs on the repo itself, so nothing is checked out first. The log lists every worktree it removed or kept, and why.</p>
+            ) : current.global ? (
               <p className="note">
                 Each run checks out the latest {settings?.baseBranch || 'base branch'} into its own folder (replaced every run), and every step runs
                 there. <code>$WORKTREE</code> is that folder, <code>$BASE</code> the branch. There&apos;s no ticket, so <code>$TICKET</code> is empty.
@@ -397,9 +400,34 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
 
             {groupSteps(current.steps).map((g) => (
               <section key={g.label}>
-                <div className="grouplabel steps">{g.label === 'Claude' ? 'Claude · runs inside the worktree' : g.label}</div>
+                <div className="grouplabel steps">
+                  {g.label === 'Claude' ? 'Claude · runs inside the worktree' : g.items.every(({ step }) => step.type === 'cleanup') ? 'Steps' : g.label}
+                </div>
                 {g.items.map(({ step: st, index: i }) => (
                   <Fragment key={i}>
+                  {st.type === 'cleanup' ? (
+                    <div className="step-builtin">
+                      <span className="num">{i + 1}</span>
+                      <span className="builtin-text">
+                        <strong>Clean up worktrees</strong>
+                        <span>
+                          Removes the worktrees of tickets that are Done or Canceled in Linear. Nothing to set up. It keeps worktrees with a run going or
+                          uncommitted changes, and local branches whose commits aren&apos;t on the remote.
+                        </span>
+                      </span>
+                      <span className="step-tools">
+                        <button className="icon-btn" type="button" aria-label={`Move step ${i + 1} up`} disabled={i === 0} onClick={() => moveStep(i, -1)}>
+                          ↑
+                        </button>
+                        <button className="icon-btn" type="button" aria-label={`Move step ${i + 1} down`} disabled={i === current.steps.length - 1} onClick={() => moveStep(i, 1)}>
+                          ↓
+                        </button>
+                        <button className="icon-btn" type="button" aria-label={`Remove step ${i + 1}`} onClick={() => change((s) => s.steps.splice(i, 1))}>
+                          ×
+                        </button>
+                      </span>
+                    </div>
+                  ) : (
                   <div className={`step-edit${st.type === 'claude' ? ' claude' : ''}`}>
                     <span className="num">{i + 1}</span>
                     <select
@@ -408,7 +436,14 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
                       value={st.type}
                       onChange={(e) => {
                         const type = e.target.value as StepDef['type']
-                        changeStep(i, type === 'linear' ? { type, run: undefined, moveTo: st.moveTo ?? '' } : { type, moveTo: undefined, run: st.run ?? '' })
+                        changeStep(
+                          i,
+                          type === 'linear'
+                            ? { type, run: undefined, moveTo: st.moveTo ?? '' }
+                            : type === 'cleanup'
+                              ? { type, run: undefined, moveTo: undefined, ...(st.name.startsWith('New ') || !st.name.trim() ? { name: 'Clean up worktrees' } : {}) }
+                              : { type, moveTo: undefined, run: st.run ?? '' }
+                        )
                       }}
                     >
                       {(['script', 'claude', 'linear'] as const).map((t) => (
@@ -463,6 +498,7 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
                       </button>
                     </span>
                   </div>
+                  )}
                   {st.type === 'claude' && missingFlags(st.run ?? '').length > 0 && (
                     <div className="step-warn">
                       {missingFlags(st.run ?? '').map((m) => m.why).join(' ')}
@@ -544,6 +580,11 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
               {!current.global && (
                 <button className="btn" type="button" onClick={() => change((s) => s.steps.push(NEW_STEP.linear()))}>
                   Add Linear move
+                </button>
+              )}
+              {!current.steps.some((st) => st.type === 'cleanup') && (
+                <button className="btn" type="button" title="Remove the worktrees of tickets that are Done or Canceled in Linear" onClick={() => change((s) => s.steps.push(NEW_STEP.cleanup()))}>
+                  Add worktree cleanup
                 </button>
               )}
               <button className="btn" type="button" style={{ marginLeft: 'auto' }} title="Make a copy of this action to change" onClick={duplicateSet}>

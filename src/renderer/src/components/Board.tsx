@@ -447,13 +447,26 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
   const group = groupBy ? board.team?.labelGroups?.find((g) => g.id === groupBy) : undefined
   const [expanded, setExpanded] = useState<Set<string>>(loadExpanded)
 
+  // In each column: tickets with a run going first, then tickets that have had a run (newest run first
+  // in both), then the rest in Linear's order.
   const sortByState = (issues: LinearIssue[]): Map<string, LinearIssue[]> => {
+    const tier = (i: LinearIssue): number => {
+      const r = latestRun.get(i.id)
+      return !r ? 2 : isActiveRun(r.status) ? 0 : 1
+    }
     const map = new Map<string, LinearIssue[]>()
     for (const i of issues) map.set(i.stateId, [...(map.get(i.stateId) ?? []), i])
-    for (const list of map.values()) list.sort((a, b) => a.sortOrder - b.sortOrder)
+    for (const list of map.values())
+      list.sort((a, b) => {
+        const ta = tier(a)
+        const tb = tier(b)
+        if (ta !== tb) return ta - tb
+        if (ta < 2) return (latestRun.get(b.id)?.createdAt ?? 0) - (latestRun.get(a.id)?.createdAt ?? 0)
+        return a.sortOrder - b.sortOrder
+      })
     return map
   }
-  const byState = useMemo(() => sortByState(board.issues), [board.issues])
+  const byState = useMemo(() => sortByState(board.issues), [board.issues, latestRun])
 
   // One lane per label in the group (in label-name order), then the tickets without one.
   const lanes = useMemo((): (Lane & { byState: Map<string, LinearIssue[]> })[] | null => {
@@ -470,7 +483,7 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
       .map(([key, v]) => ({ key, label: v.label, name: v.label ? shortLabel(v.label, group) : `No ${group.name.toLowerCase()}`, issues: v.issues }))
       .sort((a, b) => (a.key === '' ? 1 : b.key === '' ? -1 : a.name.localeCompare(b.name)))
     return out.map((lane) => ({ ...lane, byState: sortByState(lane.issues) }))
-  }, [board.issues, board.team, group])
+  }, [board.issues, board.team, group, latestRun])
 
   function toggleLane(key: string): void {
     setExpanded((prev) => {

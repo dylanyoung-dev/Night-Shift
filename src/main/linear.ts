@@ -522,3 +522,27 @@ export async function fetchCompleted(
   }
   return out
 }
+
+// Linear states of tickets by identifier (IGN-706), for cleaning up worktrees. Tickets Linear doesn't
+// know are simply missing from the result (an identifier-looking folder name is not an error).
+export async function fetchIssueStates(apiKey: string, identifiers: string[]): Promise<Map<string, { name: string; type: string }>> {
+  const byTeam = new Map<string, number[]>()
+  for (const id of identifiers) {
+    const m = /^([A-Za-z][A-Za-z0-9]*)-(\d+)$/.exec(id)
+    if (m) byTeam.set(m[1].toUpperCase(), [...(byTeam.get(m[1].toUpperCase()) ?? []), Number(m[2])])
+  }
+  const out = new Map<string, { name: string; type: string }>()
+  for (const [team, numbers] of byTeam) {
+    for (let i = 0; i < numbers.length; i += 200) {
+      const { issues } = await gql<{ issues: { nodes: { identifier: string; state: { name: string; type: string } }[] } }>(
+        apiKey,
+        `query States($team: String!, $numbers: [Float!]) {
+          issues(first: 250, filter: { team: { key: { eq: $team } }, number: { in: $numbers } }) { nodes { identifier state { name type } } }
+        }`,
+        { team, numbers: numbers.slice(i, i + 200) }
+      )
+      for (const n of issues.nodes) out.set(n.identifier.toUpperCase(), n.state)
+    }
+  }
+  return out
+}

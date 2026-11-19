@@ -30,6 +30,7 @@ export interface RunnerDeps {
   // the whole board, undefined means the run's own ticket (or the whole board for a global run).
   onTicketsChanged?(run: Run, ticket?: string | null): void
   getSet(name: string): StepSet | undefined // the action a run came from, by name (for continuing a run)
+  cleanupWorktrees(run: Run, log: (text: string) => void): Promise<boolean> // the built-in "Clean up worktrees" step
 }
 
 interface Active {
@@ -280,6 +281,11 @@ export class Runner {
       this.log(run, `Night Shift: ${run.stepsName} (global action, from ${run.branch})\n`)
       const rs = run.steps[0]
       run.currentStep = 0
+      if (def.steps.length && def.steps.every((s) => s.type === 'cleanup')) {
+        // Cleaning up worktrees works on the repo itself: no checkout needed.
+        rs.status = 'skipped'
+        this.log(run, `\n▸ ${rs.name}: skipped (not needed to clean up worktrees)\n`)
+      } else {
       rs.status = 'running'
       rs.startedAt = Date.now()
       rs.command = `git worktree add --detach ${run.worktree} origin/${run.branch}`
@@ -296,6 +302,7 @@ export class Runner {
         run.status = a.stopRequested ? 'stopped' : 'failed'
       }
       rs.endedAt = Date.now()
+      }
       this.changed()
     } else {
       this.log(run, `Night Shift: ${run.stepsName} for ${run.identifier} (${run.title})\n`)
@@ -323,6 +330,9 @@ export class Runner {
       try {
         if (step.type === 'linear' && run.global) {
           this.log(run, `\n▸ ${step.name}: a global action has no ticket to move\n`)
+        } else if (step.type === 'cleanup') {
+          this.log(run, `\n▸ ${step.name}: remove worktrees of tickets that are done or canceled\n`)
+          ok = await this.deps.cleanupWorktrees(run, (text) => this.log(run, text))
         } else if (step.type === 'linear') {
           this.log(run, `\n▸ ${step.name}: move ${run.identifier} to "${step.moveTo}"\n`)
           await this.deps.moveIssue(run.issueId, step.moveTo ?? '')

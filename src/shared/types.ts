@@ -250,7 +250,8 @@ export interface LinearPullRequest {
   status: 'open' | 'draft' | 'merged' | 'closed' | 'unknown'
 }
 
-export type StepType = 'script' | 'claude' | 'linear'
+// cleanup: removes the worktrees of tickets that are done or canceled in Linear (built in, no command)
+export type StepType = 'script' | 'claude' | 'linear' | 'cleanup'
 export type OnFail = 'stop' | 'continue'
 
 export interface StepDef {

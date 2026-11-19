@@ -1,13 +1,14 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, shell, Tray } from 'electron'
 import { hostname } from 'os'
-import { basename, join } from 'path'
+import { basename, dirname, join } from 'path'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'fs'
 import type { BoardData, HostMachineSettings, ImportGroupKey, IssueUpdate, LinearIssue, LinearState, RemoteTarget, Run, SaveConflict, Settings, SettingsUpdate, SharedSettings, StepSet, StepsFile } from '../shared/types'
-import { globalRunKey } from '../shared/types'
+import { globalRunKey, isActiveRun } from '../shared/types'
 import { getLinearKey, getSettings, updateSettings } from './settings'
-import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, removeLabelByName, updateIssue, fetchIssueDetail, fetchIssueRelations, fetchLinearImage } from './linear'
+import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, removeLabelByName, updateIssue, fetchIssueDetail, fetchIssueRelations, fetchLinearImage, fetchIssueStates } from './linear'
 import { globalSet, loadSteps, parseSteps, saveSteps, setForState, setsForState, starterSteps, stringifySteps, STEPS_RELATIVE_PATH } from './steps'
-import { Runner } from './runner'
+import { Runner, resolveWorktreePath } from './runner'
+import { cleanupWorktrees } from './worktreeCleanup'
 import { getUsage, usageProgress } from './usage'
 import { getTicketStats } from './ticketStats'
 import { checkLimits, getLimits, loadLimits, onLimitsChange } from './limits'
@@ -115,7 +116,7 @@ function queueTicketSync(ticket: string | null): void {
   }, 1500)
 }
 
-const runner = new Runner({
+const runner: Runner = new Runner({
   getRepoPath: () => getSettings().repoPath,
   getBaseBranch: () => getSettings().baseBranch,
   getWorktreeMode: () => getSettings().worktreeMode,
@@ -134,6 +135,22 @@ const runner = new Runner({
   onOutput: (runId, chunk) => send('run-output', runId, chunk),
   onWaiting: (run) => notifyWaiting(run.id, run.identifier, run.waiting?.reason ?? 'Claude needs you'),
   getSet: (name) => loadSteps(getSettings().repoPath).sets.find((x) => x.name.toLowerCase() === name.toLowerCase()),
+  cleanupWorktrees: (run, log): Promise<boolean> => {
+    const key = getLinearKey()
+    if (!key) throw new Error('No Linear API key set')
+    const s = getSettings()
+    // Where this machine creates worktrees: the setting, and any action that has its own path.
+    const templates = [s.worktreePath, ...loadSteps(s.repoPath).sets.map((x) => x.worktree?.path ?? '')].filter((t) => t.trim())
+    const parents = templates.map((t) => dirname(resolveWorktreePath(t, { repo: s.repoPath, id: 'x', ticket: 'X', branch: 'x' })))
+    return cleanupWorktrees({
+      repo: s.repoPath,
+      worktreeParents: parents,
+      teamKeys: [s.linearTeamKey],
+      ticketStates: (ids) => fetchIssueStates(key, ids),
+      isBusy: (ticket): boolean => runner.list().some((r: Run) => r.id !== run.id && isActiveRun(r.status) && r.identifier.toUpperCase() === ticket),
+      log
+    })
+  },
   applyFailurePlan: async (issueId, plan) => {
     const key = getLinearKey()
     if (!key) throw new Error('No Linear API key set')

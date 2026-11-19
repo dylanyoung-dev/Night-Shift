@@ -24,9 +24,9 @@ type Raw = Record<string, unknown>
 
 function normalizeStep(raw: Raw, i: number): StepDef {
   const type: StepDef['type'] =
-    raw.type === 'claude' || raw.type === 'linear' || raw.type === 'script' ? raw.type : raw.moveTo ? 'linear' : 'script'
+    raw.type === 'claude' || raw.type === 'linear' || raw.type === 'script' || raw.type === 'cleanup' ? raw.type : raw.moveTo ? 'linear' : 'script'
   return {
-    name: String(raw.name ?? `Step ${i + 1}`),
+    name: String(raw.name || (type === 'cleanup' ? 'Clean up worktrees' : `Step ${i + 1}`)),
     type,
     run: raw.run !== undefined && raw.run !== null ? String(raw.run) : undefined,
     moveTo: raw.moveTo !== undefined && raw.moveTo !== null ? String(raw.moveTo) : undefined,
@@ -109,7 +109,7 @@ export function checkSets(sets: StepSet[]): string[] {
       if (!st.name.trim()) problems.push(`${where} needs a name.`)
       if (st.type === 'linear' && set.global) problems.push(`${where} moves a ticket, but "${set.name}" is a global action with no ticket.`)
       else if (st.type === 'linear' && !st.moveTo?.trim()) problems.push(`${where} needs a Linear state to move to.`)
-      if (st.type !== 'linear' && !st.run?.trim()) problems.push(`${where} needs a command.`)
+      if (st.type !== 'linear' && st.type !== 'cleanup' && !st.run?.trim()) problems.push(`${where} needs a command.`)
     })
   }
   return problems
@@ -156,9 +156,9 @@ export function setForState(file: StepsFile, stateName: string, setName?: string
 }
 
 function stepToYaml(st: StepDef): Raw {
-  const out: Raw = { name: st.name.trim(), type: st.type }
+  const out: Raw = { name: st.name.trim() || (st.type === 'cleanup' ? 'Clean up worktrees' : ''), type: st.type }
   if (st.type === 'linear') out.moveTo = st.moveTo?.trim()
-  else out.run = st.run?.trim()
+  else if (st.type !== 'cleanup') out.run = st.run?.trim()
   if (st.cwd) out.cwd = st.cwd
   if (st.only) out.only = st.only
   if (st.onFail === 'continue') out.onFail = 'continue'
