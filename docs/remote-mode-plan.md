@@ -16,7 +16,7 @@ Status: **approved on 2026-11-18, with the additions in section 8. Build steps 1
 
 ## 1. The host definition
 
-One block in the host's `settings.json`, shown as **Settings › This machine is the host**:
+One block in the host's `settings.json`, shown as **Settings › Remote access › Host**:
 
 ```json
 "host": {
@@ -212,7 +212,7 @@ You run these yourself. Step 0 works with build step 1. Steps 2.4, 3 and 4 need 
 
 1. **On the desktop, restart `npm run dev`.** The host code is in the main process, so it needs a restart.
 2. **Turn on the host.**
-   1. Go to **Settings › Host** and tick **This machine is the host**.
+   1. Go to **Settings › Remote access** and choose **Host**.
    2. Leave the port at 47615 and choose **Save settings**.
    3. The section should say **Listening on 100.88.252.16:47615 and [fd7a:…]:47615**.
    4. If Windows Firewall asks to allow access, choose **Cancel**. Allowing would open every network; the rule in step 4 below covers Tailscale only.
@@ -220,7 +220,7 @@ You run these yourself. Step 0 works with build step 1. Steps 2.4, 3 and 4 need 
    ```powershell
    curl.exe -s --max-time 5 http://dylandesktop:47615/v1/host
    ```
-   - **Pass for T1 and T2:** JSON where `caller.device` is your laptop (`dylanlaptop`) and `caller.login` is your Tailscale login. Settings › Host on the desktop then says "Last request from dylanlaptop".
+   - **Pass for T1 and T2:** JSON where `caller.device` is your laptop (`dylanlaptop`) and `caller.login` is your Tailscale login. Settings › Remote access on the desktop then says "Last request from dylanlaptop".
    - **Times out:** Windows Firewall is blocking it, so do step 4 and try again.
    - **403:** the laptop is signed in to Tailscale as a different user. The desktop's log (`%APPDATA%\night-shift\logs\main.log`) has a `host: refused` line naming the device and login.
 4. **Only if step 3 timed out:** on the desktop, in an admin PowerShell, add the Tailscale-only rule.
@@ -252,7 +252,7 @@ You run these yourself. Step 0 works with build step 1. Steps 2.4, 3 and 4 need 
 
 ### 2. Host (desktop)
 
-1. **Turn on hosting.** In Night Shift, **Settings › Host › This machine is the host**:
+1. **Turn on hosting.** In Night Shift, **Settings › Remote access › Host**:
    1. turn it on;
    2. check the name, and set the port (default 47615);
    3. choose **Save**.
@@ -288,10 +288,9 @@ You run these yourself. Step 0 works with build step 1. Steps 2.4, 3 and 4 need 
 ### 3. Remote (laptop)
 
 1. **Install Night Shift** from `https://nightshift-updates.dylanyoung.dev/download/NightShiftSetup.exe`.
-2. **Point it at the host.** In **Settings › Remote**:
-   1. tick **Use another machine as the host**;
-   2. paste `dylandesktop.tail1a8202.ts.net:47615`, or type `dylandesktop` and the port;
-   3. choose **Test connection**. Expect "Connected to dylandesktop · Night Shift 0.x".
+2. **Point it at the host.** In **Settings › Remote access**, choose **Remote**, then:
+   1. paste `dylandesktop.tail1a8202.ts.net:47615`, or type `dylandesktop` and the port;
+   2. choose **Test connection**. Expect "Connected to dylandesktop · Night Shift 0.x".
 3. **Add the laptop's own Linear API key**, for the board.
 
 ### 4. Check it end to end
@@ -313,7 +312,7 @@ To stop the host starting at sign-in: `Disable-ScheduledTask -TaskName "Night Sh
 
 
 Any one of these is enough:
-- **In Night Shift,** on the desktop: turn off **Settings › This machine is the host**.
+- **In Night Shift,** on the desktop: set **Settings › Remote access** to **On its own**.
 - **Tailscale:** run `tailscale down` on the desktop.
 - **Admin console:** remove the device.
 - **Firewall:** `Remove-NetFirewallRule -DisplayName "Night Shift host (Tailscale only)"`.
@@ -322,7 +321,7 @@ Any one of these is enough:
 
 **Build order**
 1. **Done:**
-   - the host definition (Settings › Host, in `settings.json › host`);
+   - the host definition (Settings › Remote access, in `settings.json › host`);
    - binding to Tailscale addresses only;
    - the `whois` caller check;
    - `GET /v1/host`.

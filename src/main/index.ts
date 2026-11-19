@@ -360,7 +360,7 @@ const ops: HostOps = {
   checkLimits: () => checkLimits(getSettings().repoPath)
 }
 
-// Serves remote Night Shifts over Tailscale when Settings › Host is on (never in remote mode).
+// Serves remote Night Shifts over Tailscale when Settings › Remote access is set to Host (never in remote mode).
 const host = new HostServer(
   () => ({ ...getSettings().host, enabled: getSettings().host.enabled && !remoteMode() }),
   (st) => {
@@ -620,7 +620,7 @@ function registerIpc(): void {
       if (r.body.apiVersion !== HOST_API_VERSION) return { error: `${r.body.name} runs Night Shift ${r.body.appVersion}, which doesn't match this version. Update both.` }
       return { ok: true, name: r.body.name, appVersion: r.body.appVersion, apiVersion: r.body.apiVersion }
     } catch (err) {
-      return { error: `${(err as Error).message}. Check that Tailscale is on here, and that Night Shift is running on the host with Settings › Host turned on.` }
+      return { error: `${(err as Error).message}. Check that Tailscale is on here, and that Night Shift is running on the host with Settings › Remote access set to Host.` }
     }
   })
   ipcMain.handle('host:status', () => host.view())

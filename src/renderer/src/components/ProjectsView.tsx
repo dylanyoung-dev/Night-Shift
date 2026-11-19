@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { LinearProject, NightShiftProject, Settings } from '../../../shared/types'
 import ConflictBanner from './ConflictBanner'
+import SaveStatus from './SaveStatus'
 
 interface Props {
   settings: Settings
@@ -118,19 +119,18 @@ export default function ProjectsView({ settings, linearProjects, onSaved, onShow
       <div className="page projects-page">
         <div className="header">
           <h1>{current?.name || 'Projects'}</h1>
-          {dirty && <span className="chip warn-chip">Unsaved changes</span>}
-          {saved && !dirty && <span className="note">Saved</span>}
-          {conflict && <ConflictBanner message={conflict} onLoadTheirs={discard} onKeepMine={() => (setBaseRevs(settings.sharedRevs), setConflict(null))} />}
           <div className="right">
+            <SaveStatus dirty={dirty} saving={saving} saved={saved} onSave={() => void save()} />
             {dirty && (
               <button className="btn" type="button" onClick={discard} disabled={saving}>
-                Discard changes
+                Discard
               </button>
             )}
             <button className="btn primary" type="button" onClick={() => void save()} disabled={!dirty || saving}>
-              {saving ? 'Saving…' : 'Save projects'}
+              Save projects
             </button>
           </div>
+          {conflict && <ConflictBanner message={conflict} onLoadTheirs={discard} onKeepMine={() => (setBaseRevs(settings.sharedRevs), setConflict(null))} />}
         </div>
         <p className="note">
           A project shows only the tickets in the Linear projects you link to it. Projects appear under Linear in the left nav; pick one there to switch the

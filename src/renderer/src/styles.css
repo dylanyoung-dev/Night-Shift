@@ -229,7 +229,8 @@ a:hover { color: var(--link-hover); }
 .page { flex: 1 1 auto; overflow: auto; padding: 20px 28px 40px; }
 .page h1 { margin: 0; font-size: 20px; font-weight: 600; }
 .page .header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 8px; }
-.page .header .right { margin-left: auto; display: flex; gap: 8px; }
+.page .header .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.page .header > .banner.conflict { flex-basis: 100%; margin: 4px 0 0; }
 .note { font-size: 12px; color: var(--muted); }
 .stateblock { margin-top: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
 .stateblock h2 { margin: 0 0 4px; font-size: 15px; }
@@ -812,3 +813,22 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* A save refused because the same item changed on another machine */
 .banner.conflict { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .banner.conflict .row-actions { display: inline-flex; gap: 8px; }
+
+/* Save state beside every Save button: amber dot while unsaved, spinner while saving, a tick that fades */
+.save-status { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 4px; font-size: 12.5px; line-height: 1; color: var(--text-2); white-space: nowrap; }
+.save-status:empty { display: none; }
+.save-status.dirty { color: var(--warn-text); }
+.save-status.saved { color: var(--ok); animation: save-fade 2.5s ease forwards; }
+.save-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent); }
+.save-spin { width: 11px; height: 11px; border-radius: 50%; border: 1.6px solid var(--line-3); border-top-color: var(--text-2); animation: save-rotate .8s linear infinite; }
+.save-tick { flex: none; }
+@keyframes save-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes save-rotate { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .save-status.saved { animation: none; } .save-spin { animation-duration: 2s; } }
+
+/* The ticket panel: one side panel with Run, Ticket and document tabs */
+.ticket-panel .panel.run-body { flex: 1 1 auto; border-left: 0; min-height: 0; }
+.ticket-panel .glimpse-head .run-state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.ticket-panel .glimpse-head .btn.icon-only { width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+/* On very wide panels keep text at a readable line length */
+.ticket-panel .glimpse-doc, .ticket-panel .glimpse-main { max-width: 120ch; }

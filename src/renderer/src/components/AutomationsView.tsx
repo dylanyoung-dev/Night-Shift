@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Automation, AutomationStatus, LinearState, Settings, StepsFile } from '../../../shared/types'
 import { StatusIcon } from './LinearIcons'
 import ConflictBanner from './ConflictBanner'
+import SaveStatus from './SaveStatus'
 
 interface Props {
   settings: Settings
@@ -203,8 +204,18 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
       <div className="page projects-page">
         <div className="header">
           <h1>{current?.name || 'Automations'}</h1>
-          {dirty && <span className="chip warn-chip">Unsaved changes</span>}
-          {!dirty && message && <span className="note">{message}</span>}
+          {!dirty && message && message !== 'Saved' && <span className="note">{message}</span>}
+          <div className="right">
+            <SaveStatus dirty={dirty} saving={saving} saved={message === 'Saved'} onSave={() => void save()} />
+            {dirty && (
+              <button className="btn" type="button" disabled={saving} onClick={() => (setList(copy(settings.automations)), setDirty(false))}>
+                Discard
+              </button>
+            )}
+            <button className="btn primary" type="button" disabled={!dirty || saving} onClick={() => void save()}>
+              Save automations
+            </button>
+          </div>
           {conflict && (
             <ConflictBanner
               message={conflict}
@@ -212,16 +223,6 @@ export default function AutomationsView({ settings, states, onSaved }: Props): J
               onKeepMine={() => (setBaseRevs(settings.sharedRevs), setConflict(null))}
             />
           )}
-          <div className="right">
-            {dirty && (
-              <button className="btn" type="button" disabled={saving} onClick={() => (setList(copy(settings.automations)), setDirty(false))}>
-                Discard changes
-              </button>
-            )}
-            <button className="btn primary" type="button" disabled={!dirty || saving} onClick={() => void save()}>
-              {saving ? 'Saving…' : 'Save automations'}
-            </button>
-          </div>
         </div>
         <p className="note">
           Automations start runs for tickets in their states, using the actions set up for those states. They obey the {settings.maxConcurrent}-at-once limit

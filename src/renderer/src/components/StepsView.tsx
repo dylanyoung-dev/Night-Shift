@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import SaveStatus from './SaveStatus'
 import { CLAUDE_RUN_FLAGS, DEFAULT_CLAUDE_COMMAND, DEFAULT_FAILURE_LABEL, DEFAULT_FAILURE_RETRIES, setLabel, type LinearState, type OnFailure, type SaveConflict, type Settings, type StepDef, type StepSet, type StepsFile, type WorktreeMode } from '../../../shared/types'
 import { groupSteps } from '../util'
 import { StatusIcon } from './LinearIcons'
@@ -227,14 +228,13 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
       <div className="page steps-editor">
         <div className="header">
           <h1>{current?.name || 'Actions'}</h1>
-          {dirty && <span className="chip warn-chip">Unsaved changes</span>}
-          {saved && !dirty && <span className="note">Saved</span>}
           <div className="right">
+            <SaveStatus dirty={dirty} saving={saving} saved={saved} onSave={settings?.repoPath ? () => void save() : undefined} />
             <button className="btn" type="button" onClick={load} disabled={saving}>
-              {dirty ? 'Discard changes' : 'Reload'}
+              {dirty ? 'Discard' : 'Reload'}
             </button>
             <button className="btn primary" type="button" onClick={() => void save()} disabled={!dirty || saving || !settings?.repoPath}>
-              {saving ? 'Saving…' : 'Save actions'}
+              Save actions
             </button>
           </div>
         </div>

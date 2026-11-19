@@ -2,9 +2,9 @@ import { useEffect, useRef } from 'react'
 import { isActiveRun, type LinearIssue, type Run, type StepChoice } from '../../../shared/types'
 import Composer from './Composer'
 import LogText from './LogText'
-import { duration, groupSteps, runColor, runLabel, stepColor, stripAnsi } from '../util'
+import { duration, groupSteps, stepColor, stripAnsi } from '../util'
 
-interface Props {
+export interface RunDetailsProps {
   issue: LinearIssue | null
   run: Run | null
   log: string
@@ -12,11 +12,11 @@ interface Props {
   onStart(issueId: string, setName: string): void
   onStop(runId: string): void
   onOpenLog(runId: string): void
-  onOpenLinear(url: string): void
-  onClose(): void
 }
 
-export default function RunPanel({ issue, run, log, sets, onStart, onStop, onOpenLog, onOpenLinear, onClose }: Props): JSX.Element {
+// The Run tab of the ticket panel: the latest run's steps, live log and reply box, and the actions
+// that can be started for the ticket's state.
+export default function RunDetails({ issue, run, log, sets, onStart, onStop, onOpenLog }: RunDetailsProps): JSX.Element {
   const logRef = useRef<HTMLPreElement>(null)
 
   useEffect(() => {
@@ -24,33 +24,16 @@ export default function RunPanel({ issue, run, log, sets, onStart, onStop, onOpe
     if (el) el.scrollTop = el.scrollHeight
   }, [log])
 
-  const identifier = issue?.identifier ?? run?.identifier ?? ''
   const title = issue?.title ?? run?.title ?? ''
   const active = run && isActiveRun(run.status)
 
   return (
-    <aside className="panel" aria-label="Run detail">
-      <div className="head">
-        <span className="mono">{identifier}</span>
-        {run && <span className="chip">{run.stepsName}</span>}
-        {run && <span className="chip">Local</span>}
-        {run && (
-          <span className="state">
-            <span className="dot" style={{ background: runColor[run.status] }} />
-            {runLabel[run.status]}
-          </span>
-        )}
-        <button className="icon-btn" type="button" aria-label="Close panel" title="Close (Esc)" onClick={onClose}>
-          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-            <path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
-        </button>
-      </div>
+    <div className="panel run-body" role="tabpanel" aria-label="Run">
       <h2>{title}</h2>
       {issue && <span className="mono">In Linear: {issue.stateName}</span>}
       {run && (
         <span className="mono">
-          {run.branch} · {run.worktreeMode === 'agent' ? 'worktree set up by the agent' : run.worktree}
+          {run.stepsName} · {run.branch} · {run.worktreeMode === 'agent' ? 'worktree set up by the agent' : run.worktree}
         </span>
       )}
 
@@ -100,15 +83,10 @@ export default function RunPanel({ issue, run, log, sets, onStart, onStop, onOpe
         )}
         {run && (
           <button className="btn" type="button" title="Open the live log full screen" onClick={() => onOpenLog(run.id)}>
-            Open
-          </button>
-        )}
-        {issue && (
-          <button className="btn" type="button" onClick={() => onOpenLinear(issue.url)}>
-            Open in Linear
+            Open log
           </button>
         )}
       </div>
-    </aside>
+    </div>
   )
 }

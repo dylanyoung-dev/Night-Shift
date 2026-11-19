@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import ConflictBanner from './ConflictBanner'
+import SaveStatus from './SaveStatus'
 import { DEFAULT_HOST_PORT, DEFAULT_WORKTREE_PATH, type HostSettings, type HostStatus, type ImportGroupKey, type RemoteStatus, type ImportPreview, type RepoBranches, type Settings, type UpdateState } from '../../../shared/types'
 
 // Mirrors resolveWorktreePath in the main process, for the example under the field.
@@ -22,12 +23,11 @@ const STATE_TYPES = ['triage', 'backlog', 'unstarted', 'started', 'completed', '
 const ALL_SECTIONS = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'linear', label: 'Linear' },
-  { id: 'remote', label: 'Remote' },
+  { id: 'machine', label: 'Remote access' },
   { id: 'repo', label: 'Repository', local: true },
   { id: 'worktrees', label: 'Worktrees', local: true },
   { id: 'runs', label: 'Runs', local: true },
   { id: 'hostmachine', label: 'Host machine', remote: true },
-  { id: 'host', label: 'Host', local: true },
   { id: 'sharing', label: 'Share settings' },
   { id: 'about', label: 'About' }
 ]
@@ -36,6 +36,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
   const [form, setForm] = useState({ ...settings })
   const [apiKey, setApiKey] = useState('')
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [active, setActive] = useState('appearance')
   const remote = settings.mode === 'remote' // as saved; switching applies on Save
@@ -126,6 +127,17 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
     void window.nightShift.getHostStatus?.().then(setHostStatus)
     return window.nightShift.onHostStatus?.(setHostStatus)
   }, [])
+  // This machine's role. Host and remote are exclusive, so they're one choice.
+  type Role = 'local' | 'host' | 'remote'
+  const roleOf = (x: Settings): Role => (x.mode === 'remote' ? 'remote' : x.host.enabled ? 'host' : 'local')
+  const role = roleOf(form)
+  const savedRole = roleOf(settings)
+  function chooseRole(r: Role): void {
+    setForm((f) => ({ ...f, mode: r === 'remote' ? 'remote' : 'local', host: { ...f.host, enabled: r === 'host' } }))
+    setSaved(false)
+    setDirty(true)
+    setRemoteTest(null)
+  }
   function setHost(patch: Partial<HostSettings>): void {
     set('host', { ...form.host, ...patch })
     setDirtyHost(true)
@@ -140,7 +152,8 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
   async function save(): Promise<void> {
     // activeProjectId is left out: it's set from the sidebar and may have changed since this form opened.
     const { hasLinearKey: _ignored, activeProjectId: _active, ...rest } = form
-    const s = await window.nightShift.saveSettings({ ...rest, ...(apiKey ? { linearApiKey: apiKey } : {}) })
+    setSaving(true)
+    const s = await window.nightShift.saveSettings({ ...rest, ...(apiKey ? { linearApiKey: apiKey } : {}) }).finally(() => setSaving(false))
     setApiKey('')
     if (s.saveError) {
       // Shared settings clashed with an edit elsewhere: nothing shared was saved; keep the form as typed.
@@ -154,6 +167,15 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
     setDirtyHost(false)
     onSaved(s)
     setSaved(true)
+    setDirty(false)
+  }
+
+  function discard(): void {
+    setForm({ ...settings })
+    setApiKey('')
+    setHostLogins(settings.host.allowedLogins.join(', '))
+    setDirtyHost(false)
+    setConflict(null)
     setDirty(false)
   }
 
@@ -213,18 +235,23 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
       <div className="header settings-header">
         <h1>Settings</h1>
         <div className="right">
-          {dirty ? <span className="chip warn-chip">Unsaved changes</span> : saved && <span className="note">Saved</span>}
-          {conflict && (
-            <ConflictBanner
-              message={conflict}
-              onLoadTheirs={() => (setForm({ ...settings }), setDirty(false), setConflict(null))}
-              onKeepMine={() => (setForm((f) => ({ ...f, sharedRevs: settings.sharedRevs })), setConflict(null))}
-            />
+          <SaveStatus dirty={dirty || !!apiKey} saving={saving} saved={saved} onSave={() => void save()} />
+          {(dirty || !!apiKey) && (
+            <button className="btn" type="button" disabled={saving} onClick={discard}>
+              Discard
+            </button>
           )}
-          <button className="btn primary" type="button" disabled={!dirty && !apiKey} onClick={() => void save()}>
+          <button className="btn primary" type="button" disabled={(!dirty && !apiKey) || saving} onClick={() => void save()}>
             Save settings
           </button>
         </div>
+        {conflict && (
+          <ConflictBanner
+            message={conflict}
+            onLoadTheirs={discard}
+            onKeepMine={() => (setForm((f) => ({ ...f, sharedRevs: settings.sharedRevs })), setConflict(null))}
+          />
+        )}
       </div>
 
       <div className="settings-layout">
@@ -339,76 +366,149 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
             </div>
           </div>
         </section>
-        <section id="remote" className="settings-section" aria-labelledby="remote-title">
+        <section id="machine" className="settings-section" aria-labelledby="machine-title">
           <div className="section-side">
-            <h2 id="remote-title">Remote</h2>
+            <h2 id="machine-title">Remote access</h2>
             <p className="section-intro">
-              Use Night Shift on another machine (the host) over Tailscale. Agents, runs, actions and automations stay on the host; this machine shows them and can start, stop and edit them.
+              Use Night Shift across your machines over Tailscale. One machine is the host and runs every agent; others connect to it as remotes. A machine is one or the other, never both.
             </p>
           </div>
           <div className="form">
-            <label className="check-row field wide">
-              <input
-                type="checkbox"
-                checked={form.mode === 'remote'}
-                disabled={form.host.enabled}
-                onChange={(e) => {
-                  set('mode', e.target.checked ? 'remote' : 'local')
-                  setRemoteTest(null)
-                }}
-              />
-              <span>
-                <strong>Use another machine as the host</strong>
-                <span className="sub">
-                  {form.host.enabled
-                    ? 'Turn off "This machine is the host" first.'
-                    : 'This machine stops running agents and automations of its own. The board still comes straight from Linear with this machine\'s key.'}
-                </span>
-              </span>
-            </label>
-            <label className="field">
-              Host
-              <input
-                className="input"
-                value={form.remote.host}
-                placeholder="dylandesktop.tail1a8202.ts.net"
-                onChange={(e) => setRemoteHost(e.target.value)}
-              />
-              <span className="note">Its Tailscale name, as shown in the host's Settings › Host. Pasting name:port fills in both.</span>
-            </label>
-            <label className="field">
-              Port
-              <input
-                className="input"
-                type="number"
-                min={1}
-                max={65535}
-                value={form.remote.port}
-                onChange={(e) => (set('remote', { ...form.remote, port: Number(e.target.value) || DEFAULT_HOST_PORT }), setRemoteTest(null))}
-              />
-            </label>
-            <div className="field wide" role="status">
-              <div className="inputrow">
-                <button className="btn small" type="button" disabled={!form.remote.host || testing} onClick={() => void testRemote()}>
-                  {testing ? 'Testing…' : 'Test connection'}
-                </button>
-                {remoteTest && <span className={remoteTest.ok ? 'note' : 'note warn-text'}>{remoteTest.text}</span>}
+            <div className="field wide">
+              This machine
+              <div className="choices three" role="radiogroup" aria-label="This machine's role">
+                {(
+                  [
+                    ['local', 'On its own', 'Runs agents here. No other machine can connect.'],
+                    ['host', 'Host', 'Runs agents here, and your other devices can connect to it.'],
+                    ['remote', 'Remote', 'Uses another machine\'s agents, runs, actions and automations.']
+                  ] as const
+                ).map(([value, title, sub]) => (
+                  <label key={value} className={`choice${role === value ? ' active' : ''}`}>
+                    <input type="radio" name="machine-role" checked={role === value} onChange={() => chooseRole(value)} />
+                    <span>
+                      <strong>{title}</strong>
+                      <span className="sub">{sub}</span>
+                    </span>
+                  </label>
+                ))}
               </div>
-              {remote && remoteStatus && (
-                <span className="note">
-                  {remoteStatus.state === 'connected'
-                    ? `Connected to ${remoteStatus.name ?? remoteStatus.host} (Night Shift ${remoteStatus.appVersion ?? '?'}).`
-                    : remoteStatus.state === 'connecting'
-                      ? `Connecting to ${remoteStatus.host}…`
-                      : remoteStatus.state === 'incompatible'
-                        ? remoteStatus.error
-                        : `Can't reach ${remoteStatus.name ?? remoteStatus.host}${remoteStatus.since ? ` since ${new Date(remoteStatus.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}. Trying again every 10 seconds.`}
-                </span>
-              )}
-              {(form.mode !== settings.mode || form.remote.host !== settings.remote.host || form.remote.port !== settings.remote.port) && (
-                <span className="note">Save settings to switch. The window reloads.</span>
-              )}
+              {role !== savedRole && <span className="note">Save settings to switch.{role === 'remote' || savedRole === 'remote' ? ' The window reloads.' : ''}</span>}
             </div>
+            {role === 'host' && (
+              <>
+                <p className="note field wide">Listens on this machine's Tailscale address only, never on your local network or the internet. Only devices signed in to Tailscale as you can connect.</p>
+                <label className="field">
+                  Host name
+                  <input
+                    className="input"
+                    value={form.host.name}
+                    placeholder={hostStatus?.name || 'Tailscale machine name'}
+                    onChange={(e) => setHost({ name: e.target.value })}
+                  />
+                </label>
+                <label className="field">
+                  Port
+                  <input
+                    className="input"
+                    type="number"
+                    min={1024}
+                    max={65535}
+                    value={form.host.port}
+                    onChange={(e) => setHost({ port: Number(e.target.value) || DEFAULT_HOST_PORT })}
+                  />
+                </label>
+                <label className="field wide">
+                  Also allow these Tailscale logins (optional)
+                  <input
+                    className="input"
+                    value={hostLogins}
+                    placeholder="name@example.com, …"
+                    onChange={(e) => {
+                      setHostLogins(e.target.value)
+                      setHost({ allowedLogins: e.target.value.split(/[\s,;]+/).filter(Boolean) })
+                    }}
+                  />
+                  <span className="note">
+                    {hostStatus?.login ? `Devices signed in as ${hostStatus.login} are always allowed.` : 'Devices signed in to Tailscale as you are always allowed.'}
+                  </span>
+                </label>
+                <div className="field wide" role="status">
+                  <span>
+                    {!hostStatus || hostStatus.state === 'off'
+                      ? 'Off.'
+                      : hostStatus.state === 'listening'
+                        ? `Listening on ${hostStatus.addresses.map((a) => (a.includes(':') ? `[${a}]` : a) + `:${hostStatus.port}`).join(' and ')}.`
+                        : hostStatus.state === 'waiting'
+                          ? `Waiting for Tailscale: ${hostStatus.error ?? ''}. Trying again every 15 seconds.`
+                          : `Not listening: ${hostStatus.error ?? 'unknown error'}.`}
+                    {hostStatus?.lastCaller && ` Last request from ${hostStatus.lastCaller.device} at ${new Date(hostStatus.lastCaller.at).toLocaleTimeString()}.`}
+                  </span>
+                  {hostStatus?.state === 'listening' && hostStatus.dnsName && (
+                    <div className="inputrow">
+                      <span className="mono">{`${hostStatus.dnsName}:${hostStatus.port}`}</span>
+                      <button
+                        className="btn small"
+                        type="button"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(`${hostStatus.dnsName}:${hostStatus.port}`)
+                          setHostCopied(true)
+                          window.setTimeout(() => setHostCopied(false), 1500)
+                        }}
+                      >
+                        {hostCopied ? 'Copied' : 'Copy connection'}
+                      </button>
+                    </div>
+                  )}
+                  {dirtyHost && savedRole === 'host' && <span className="note">Save settings to apply host changes.</span>}
+                </div>
+              </>
+            )}
+            {role === 'remote' && (
+              <>
+                <p className="note field wide">The board still comes straight from Linear with this machine's key. Everything else comes from the host.</p>
+                <label className="field">
+                  Host
+                  <input
+                    className="input"
+                    value={form.remote.host}
+                    placeholder="dylandesktop.tail1a8202.ts.net"
+                    onChange={(e) => setRemoteHost(e.target.value)}
+                  />
+                  <span className="note">Its Tailscale name, as shown on the host under Settings › Remote access. Pasting name:port fills in both.</span>
+                </label>
+                <label className="field">
+                  Port
+                  <input
+                    className="input"
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={form.remote.port}
+                    onChange={(e) => (set('remote', { ...form.remote, port: Number(e.target.value) || DEFAULT_HOST_PORT }), setRemoteTest(null))}
+                  />
+                </label>
+                <div className="field wide" role="status">
+                  <div className="inputrow">
+                    <button className="btn small" type="button" disabled={!form.remote.host || testing} onClick={() => void testRemote()}>
+                      {testing ? 'Testing…' : 'Test connection'}
+                    </button>
+                    {remoteTest && <span className={remoteTest.ok ? 'note' : 'note warn-text'}>{remoteTest.text}</span>}
+                  </div>
+                  {remote && remoteStatus && (
+                    <span className="note">
+                      {remoteStatus.state === 'connected'
+                        ? `Connected to ${remoteStatus.name ?? remoteStatus.host} (Night Shift ${remoteStatus.appVersion ?? '?'}).`
+                        : remoteStatus.state === 'connecting'
+                          ? `Connecting to ${remoteStatus.host}…`
+                          : remoteStatus.state === 'incompatible'
+                            ? remoteStatus.error
+                            : `Can't reach ${remoteStatus.name ?? remoteStatus.host}${remoteStatus.since ? ` since ${new Date(remoteStatus.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}. Trying again every 10 seconds.`}
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </section>
         {remote && (
@@ -599,89 +699,6 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
           </div>
         </section>
           </>
-        )}
-        {!remote && (
-        <section id="host" className="settings-section" aria-labelledby="host-title">
-          <div className="section-side">
-            <h2 id="host-title">Host</h2>
-            <p className="section-intro">
-              Let Night Shift on your other devices use this machine over Tailscale. Only devices signed in to Tailscale as you can connect.
-            </p>
-          </div>
-          <div className="form">
-            <label className="check-row field wide">
-              <input type="checkbox" checked={form.host.enabled} disabled={form.mode === "remote"} onChange={(e) => setHost({ enabled: e.target.checked })} />
-              <span>
-                <strong>This machine is the host</strong>
-                <span className="sub">Listens on this machine's Tailscale address only, never on your local network or the internet.</span>
-              </span>
-            </label>
-            <label className="field">
-              Host name
-              <input
-                className="input"
-                value={form.host.name}
-                placeholder={hostStatus?.name || 'Tailscale machine name'}
-                onChange={(e) => setHost({ name: e.target.value })}
-              />
-            </label>
-            <label className="field">
-              Port
-              <input
-                className="input"
-                type="number"
-                min={1024}
-                max={65535}
-                value={form.host.port}
-                onChange={(e) => setHost({ port: Number(e.target.value) || DEFAULT_HOST_PORT })}
-              />
-            </label>
-            <label className="field wide">
-              Also allow these Tailscale logins (optional)
-              <input
-                className="input"
-                value={hostLogins}
-                placeholder="name@example.com, …"
-                onChange={(e) => {
-                  setHostLogins(e.target.value)
-                  setHost({ allowedLogins: e.target.value.split(/[\s,;]+/).filter(Boolean) })
-                }}
-              />
-              <span className="note">
-                {hostStatus?.login ? `Devices signed in as ${hostStatus.login} are always allowed.` : 'Devices signed in to Tailscale as you are always allowed.'}
-              </span>
-            </label>
-            <div className="field wide" role="status">
-              <span>
-                {!hostStatus || hostStatus.state === 'off'
-                  ? 'Off.'
-                  : hostStatus.state === 'listening'
-                    ? `Listening on ${hostStatus.addresses.map((a) => (a.includes(':') ? `[${a}]` : a) + `:${hostStatus.port}`).join(' and ')}.`
-                    : hostStatus.state === 'waiting'
-                      ? `Waiting for Tailscale: ${hostStatus.error ?? ''}. Trying again every 15 seconds.`
-                      : `Not listening: ${hostStatus.error ?? 'unknown error'}.`}
-                {hostStatus?.lastCaller && ` Last request from ${hostStatus.lastCaller.device} at ${new Date(hostStatus.lastCaller.at).toLocaleTimeString()}.`}
-              </span>
-              {hostStatus?.state === 'listening' && hostStatus.dnsName && (
-                <div className="inputrow">
-                  <span className="mono">{`${hostStatus.dnsName}:${hostStatus.port}`}</span>
-                  <button
-                    className="btn small"
-                    type="button"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(`${hostStatus.dnsName}:${hostStatus.port}`)
-                      setHostCopied(true)
-                      window.setTimeout(() => setHostCopied(false), 1500)
-                    }}
-                  >
-                    {hostCopied ? 'Copied' : 'Copy connection'}
-                  </button>
-                </div>
-              )}
-              {dirtyHost && <span className="note">Save settings to apply host changes.</span>}
-            </div>
-          </div>
-        </section>
         )}
         <section id="sharing" className="settings-section" aria-labelledby="sharing-title">
           <div className="section-side">

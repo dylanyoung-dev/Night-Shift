@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { globalRunKey, isActiveRun, orderStates, setLabel, type BoardData, type IssueUpdate, type RemoteStatus, type LinearIssue, type Run, type Settings, type StepChoice, type StepsFile } from '../../shared/types'
 import Sidebar, { View } from './components/Sidebar'
 import Board, { clearRelationsCache } from './components/Board'
-import RunPanel from './components/RunPanel'
+import TicketPanel, { type PanelTab } from './components/TicketPanel'
+import { clearIssueDetailCache } from './issueDetailCache'
 import LogView from './components/LogView'
 import StepsView from './components/StepsView'
 import SettingsView from './components/SettingsView'
@@ -10,7 +11,6 @@ import ProjectsView from './components/ProjectsView'
 import AutomationsView from './components/AutomationsView'
 import RunsView from './components/RunsView'
 import UsageView from './components/UsageView'
-import GlimpsePanel from './components/GlimpsePanel'
 import UpdateBanner from './components/UpdateBanner'
 import FilterBar, { applyFilters, NO_FILTERS, type Filters } from './components/FilterBar'
 import BranchPicker from './components/BranchPicker'
@@ -36,13 +36,14 @@ export default function App(): JSX.Element {
   const [runs, setRuns] = useState<Run[]>([])
   const [logs, setLogs] = useState<Record<string, string>>({})
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null)
-  const [glimpse, setGlimpse] = useState<{ id: string; tab: 'ticket' | 'spec'; at: number } | null>(null) // ticket shown in the Linear panel
+  const [panelTab, setPanelTab] = useState<{ tab: PanelTab; at: number } | null>(null) // a tab the card menu asked the panel to show
   const [message, setMessage] = useState<string | null>(null)
   const [reloading, setReloading] = useState(false) // the refresh button was pressed: the board is locked until Linear answers
   // Skips every cache: the board's, and the relations loaded on cards.
   const reloadBoard = async (): Promise<void> => {
     setReloading(true)
     clearRelationsCache()
+    clearIssueDetailCache()
     try {
       setBoard(await api.refreshBoard())
     } finally {
@@ -124,6 +125,9 @@ export default function App(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [logRunId, selectedIssue])
   const logRun = logRunId ? runs.find((r) => r.id === logRunId) ?? null : null
+  useEffect(() => {
+    if (!selectedIssue) setPanelTab(null) // closed: next time it opens on the Run tab
+  }, [selectedIssue])
   const [, setTick] = useState(0)
 
   useEffect(() => {
@@ -176,7 +180,6 @@ export default function App(): JSX.Element {
   }, [runs])
 
   const issue = board.issues.find((i) => i.id === selectedIssue) ?? null
-  const glimpseIssue = glimpse ? board.issues.find((i) => i.id === glimpse.id) ?? null : null
   const run = selectedIssue ? latestRun.get(selectedIssue) ?? null : null
   const activeRuns = runs.filter((r) => isActiveRun(r.status))
   const needsYou = runs.filter((r) => r.status === 'waiting')
@@ -398,7 +401,7 @@ export default function App(): JSX.Element {
               setsFor={setsFor}
               groupBy={groupBy}
               onUpdate={(id, update) => void updateIssue(id, update)}
-              onGlimpse={(id, tab) => setGlimpse({ id, tab: tab ?? 'ticket', at: Date.now() })}
+              onGlimpse={(id, tab) => (setSelectedIssue(id), setPanelTab({ tab: tab ?? 'ticket', at: Date.now() }))}
             />
             {reloading && (
               <div className="board-lock" role="status">
@@ -409,7 +412,8 @@ export default function App(): JSX.Element {
             </div>
           </div>
           {(issue || run) && (
-          <RunPanel
+          <TicketPanel
+            tabRequest={panelTab}
             issue={issue}
             run={run}
             log={run ? logs[run.id] ?? run.logTail : ''}
@@ -421,7 +425,6 @@ export default function App(): JSX.Element {
             onClose={() => setSelectedIssue(null)}
           />
           )}
-          {glimpseIssue && glimpse && <GlimpsePanel issue={glimpseIssue} tab={glimpse.tab} tabRequest={glimpse.at} onClose={() => setGlimpse(null)} />}
         </>
       )}
       {!logRun && view === 'agents' && (
