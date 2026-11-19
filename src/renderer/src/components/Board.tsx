@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { groupLabel, shortLabel } from './FilterBar'
 import { DEFAULT_FAILURE_LABEL, isActiveRun, type BoardData, type IssueRelation, type IssueUpdate, type LinearIssue, type LinearLabel, type LinearState, type Run, type StepChoice } from '../../../shared/types'
 import IssueMenu, { type MenuMode } from './IssueMenu'
@@ -24,6 +24,7 @@ interface Props {
   onOpenLog(runId: string): void
   selectedIssue: string | null
   onSelect(issueId: string): void
+  onClearSelection(): void // a click on the board's background, away from any card
   onStart(issueId: string, setName: string): void
   onUpdate(issueId: string, update: IssueUpdate): void
   setsFor(stateName: string): StepChoice[] // the sets of steps (buttons) for a state
@@ -381,7 +382,44 @@ function Card({
   )
 }
 
-export default function Board({ board, latestRun, runsByIssue, onReorderColumns, onOpenLog, selectedIssue, onSelect, onStart, onUpdate, setsFor, onGlimpse, groupBy }: Props): JSX.Element {
+// Where the board was scrolled to, per project, kept outside the component so it survives a board
+// reload, a project's columns briefly emptying, and leaving the board for another page and coming back.
+const boardScroll = new Map<string, { left: number; top: number }>()
+
+// Keeps the board's scroll position put. A reload can shrink the board for a moment (the browser then
+// clamps the scroll back to the left); that isn't the person scrolling, so it isn't remembered, and
+// the saved position is put back as soon as the columns are there again.
+function useKeptScroll(key: string): { ref: React.RefObject<HTMLDivElement>; onScroll(): void } {
+  const ref = useRef<HTMLDivElement>(null)
+  const onScroll = (): void => {
+    const el = ref.current
+    if (!el) return
+    const saved = boardScroll.get(key) ?? { left: 0, top: 0 }
+    const maxLeft = el.scrollWidth - el.clientWidth
+    const maxTop = el.scrollHeight - el.clientHeight
+    // Pinned at the end and smaller than before: the content shrank under it, so keep the old value.
+    const left = el.scrollLeft < saved.left - 1 && el.scrollLeft >= maxLeft - 1 ? saved.left : el.scrollLeft
+    const top = el.scrollTop < saved.top - 1 && el.scrollTop >= maxTop - 1 ? saved.top : el.scrollTop
+    boardScroll.set(key, { left, top })
+  }
+  useLayoutEffect(() => {
+    const el = ref.current
+    const saved = boardScroll.get(key)
+    if (!el || !saved) return
+    if (Math.abs(el.scrollLeft - saved.left) > 1) el.scrollLeft = saved.left
+    if (Math.abs(el.scrollTop - saved.top) > 1) el.scrollTop = saved.top
+  })
+  return { ref, onScroll }
+}
+
+// Clicks on these aren't "clicking off a ticket".
+const INTERACTIVE = '.card, button, a, input, select, textarea, label, [role="menu"], [role="button"], .issue-menu'
+
+export default function Board({ board, latestRun, runsByIssue, onReorderColumns, onOpenLog, selectedIssue, onSelect, onClearSelection, onStart, onUpdate, setsFor, onGlimpse, groupBy }: Props): JSX.Element {
+  const scroll = useKeptScroll(board.project?.id ?? 'team')
+  const clickedOff = (e: React.MouseEvent): void => {
+    if (selectedIssue && !(e.target as HTMLElement).closest(INTERACTIVE)) onClearSelection()
+  }
   const [menu, setMenu] = useState<{ issueId: string; mode: MenuMode; at: { x: number; y: number } } | null>(null)
   const [dropState, setDropState] = useState<string | null>(null)
   // Column being dragged by its header, and where it would land.
@@ -559,7 +597,7 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
 
   if (!board.states.length) {
     return (
-      <div className="board-scroll">
+      <div className="board-scroll" ref={scroll.ref}>
         <div className="board">
           <div className="empty">No Linear states loaded yet.</div>
         </div>
@@ -568,7 +606,7 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
   }
 
   return (
-    <div className={`board-scroll${lanes ? ' lanes-scroll' : ''}`}>
+    <div className={`board-scroll${lanes ? ' lanes-scroll' : ''}`} ref={scroll.ref} onScroll={scroll.onScroll} onClick={clickedOff}>
       {lanes ? (
         <div className="lanes">
           <div className="lane-heads">

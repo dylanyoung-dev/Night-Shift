@@ -115,14 +115,34 @@ export default function App(): JSX.Element {
     setSettings(await api.saveSettings({ activeProjectId: id }))
   }
 
-  // Esc closes the run panel (the live log view handles its own Esc first).
+  // Esc, the mouse's back button or Alt+Left closes the ticket panel (the live log view handles its own
+  // Esc first). An open menu takes Esc first; in a text box Esc just leaves the box, so a reply being
+  // typed isn't lost to a stray key.
   useEffect(() => {
     if (logRunId || !selectedIssue) return
+    const menuOpen = (): boolean => !!document.querySelector('.issue-menu, .branch-menu, .start-menu')
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setSelectedIssue(null)
+      const back = e.key === 'BrowserBack' || (e.altKey && e.key === 'ArrowLeft')
+      if ((e.key !== 'Escape' && !back) || e.defaultPrevented || menuOpen()) return
+      const el = document.activeElement as HTMLElement | null
+      if (e.key === 'Escape' && el && (el.matches('input, textarea, select') || el.isContentEditable)) {
+        el.blur()
+        return
+      }
+      e.preventDefault()
+      setSelectedIssue(null)
+    }
+    const onMouse = (e: MouseEvent): void => {
+      if (e.button !== 3) return // the side "back" button
+      e.preventDefault()
+      setSelectedIssue(null)
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('mouseup', onMouse)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('mouseup', onMouse)
+    }
   }, [logRunId, selectedIssue])
   const logRun = logRunId ? runs.find((r) => r.id === logRunId) ?? null : null
   useEffect(() => {
@@ -396,7 +416,8 @@ export default function App(): JSX.Element {
               onReorderColumns={reorderColumns}
               onOpenLog={setLogRunId}
               selectedIssue={selectedIssue}
-              onSelect={setSelectedIssue}
+              onSelect={(id) => setSelectedIssue((cur) => (cur === id ? null : id))}
+              onClearSelection={() => setSelectedIssue(null)}
               onStart={(id, setName) => void start(id, setName)}
               setsFor={setsFor}
               groupBy={groupBy}
