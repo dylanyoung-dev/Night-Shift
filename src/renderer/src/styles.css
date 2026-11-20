@@ -716,7 +716,7 @@ button.prop:disabled:hover { background: transparent; color: var(--text-2); }
 .glimpse-resize { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; }
 .glimpse-resize:hover { background: var(--accent-soft-line); }
 body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
-.glimpse-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); min-width: 0; }
+.glimpse-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); min-width: 0; }
 .glimpse-head .spacer { flex: 1 1 auto; }
 .glimpse-head .btn.small { height: 28px; padding: 0 10px; }
 .glimpse-crumb { background: none; border: 0; padding: 0; color: var(--muted); font-size: 12px; cursor: pointer; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -767,7 +767,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .issue-menu-list li.divided { border-top: 1px solid var(--line-2); margin-top: 4px; padding-top: 4px; }
 .issue-menu-note { display: block; padding: 6px 10px; font-size: 12px; color: var(--muted); }
 
-.glimpse-tabs { display: flex; gap: 4px; padding: 8px 14px 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.glimpse-tabs { flex: none; display: flex; gap: 4px; padding: 8px 14px 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
 .glimpse-tabs button { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; border-bottom: 2px solid transparent; padding: 6px 10px 8px; font-size: 13px; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .glimpse-tabs button:hover { color: var(--text); }
 .glimpse-tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
