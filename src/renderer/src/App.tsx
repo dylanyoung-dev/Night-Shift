@@ -4,6 +4,7 @@ import Sidebar, { View } from './components/Sidebar'
 import Board, { clearRelationsCache } from './components/Board'
 import TicketPanel, { type PanelTab } from './components/TicketPanel'
 import { clearIssueDetailCache } from './issueDetailCache'
+import { refreshPrs, usePrPolling } from './prStatus'
 import LogView from './components/LogView'
 import StepsView from './components/StepsView'
 import SettingsView from './components/SettingsView'
@@ -33,6 +34,7 @@ export default function App(): JSX.Element {
   const [view, setView] = useState<View>('board')
   const [settings, setSettings] = useState<Settings | null>(null)
   const [board, setBoard] = useState<BoardData>({ states: [], issues: [], fetchedAt: null })
+  usePrPolling(board.issues) // live pull request status from GitHub for the cards
   const [runs, setRuns] = useState<Run[]>([])
   const [logs, setLogs] = useState<Record<string, string>>({})
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null)
@@ -45,7 +47,9 @@ export default function App(): JSX.Element {
     clearRelationsCache()
     clearIssueDetailCache()
     try {
-      setBoard(await api.refreshBoard())
+      const fresh = await api.refreshBoard()
+      setBoard(fresh)
+      void refreshPrs([...new Set(fresh.issues.flatMap((i) => i.pullRequests.map((p) => p.url)))], true)
     } finally {
       setReloading(false)
     }

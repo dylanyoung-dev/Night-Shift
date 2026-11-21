@@ -5,6 +5,7 @@ import { runColor, runLabel } from '../util'
 import { Avatar, DocIcon, MilestoneIcon, PRIORITY_LABEL, PriorityIcon, StatusIcon } from './LinearIcons'
 import Markdown from './Markdown'
 import RunDetails, { type RunDetailsProps } from './RunPanel'
+import PrStrip from './PrStrip'
 
 // 'run', 'ticket', 'spec' (the spec document, whichever it turns out to be) or a document id
 export type PanelTab = string
@@ -144,6 +145,8 @@ export default function TicketPanel(props: Props): JSX.Element {
           </svg>
         </button>
       </header>
+
+      {issue && <PrStrip prs={issue.pullRequests} openUrl={onOpenLinear} />}
 
       {issue && (
         <div className="glimpse-tabs" role="tablist" aria-label="Run, ticket and documents">

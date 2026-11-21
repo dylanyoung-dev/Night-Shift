@@ -250,6 +250,27 @@ export interface LinearPullRequest {
   status: 'open' | 'draft' | 'merged' | 'closed' | 'unknown'
 }
 
+// Live status of a pull request, read from GitHub with this machine's `gh` login.
+export interface PrCheck {
+  name: string
+  state: 'pending' | 'success' | 'failure' | 'skipped'
+  url: string | null
+}
+export interface PrStatus {
+  url: string
+  number: number
+  state: 'open' | 'draft' | 'merged' | 'closed'
+  // clean: ready to merge. conflicts: merge conflicts. behind: base branch has moved on (and the repo requires up to date).
+  // blocked: branch protection (reviews or required checks). unstable: mergeable, but some checks failed. unknown: GitHub is still working it out.
+  merge: 'clean' | 'conflicts' | 'behind' | 'blocked' | 'unstable' | 'unknown'
+  review: 'approved' | 'changes_requested' | 'review_required' | null
+  checks: { state: 'none' | 'pending' | 'success' | 'failure'; items: PrCheck[] }
+  autoMerge: boolean
+  headRef: string
+  baseRef: string
+  mergeMethod: 'squash' | 'merge' | 'rebase' // the first one the repo allows, in that order
+}
+
 // cleanup: removes the worktrees of tickets that are done or canceled in Linear (built in, no command)
 export type StepType = 'script' | 'claude' | 'linear' | 'cleanup'
 export type OnFail = 'stop' | 'continue'
@@ -563,6 +584,8 @@ export interface NightShiftApi {
   installUpdate?(): Promise<void> // restart now and install the downloaded update
   getIssueDetail?(issueId: string): Promise<IssueDetail | { error: string }>
   getIssueRelations?(issueId: string): Promise<IssueRelation[] | { error: string }>
+  getPrStatuses?(urls: string[], refresh?: boolean): Promise<{ statuses: Record<string, PrStatus>; error?: string }>
+  mergePr?(url: string): Promise<{ ok: true } | { error: string }> // merge with the repo's method and delete the remote branch
   linearImage?(url: string): Promise<string | null> // data: URL for an image uploaded to Linear
   getUsage?(days: number, refresh?: boolean): Promise<UsageReport>
   getTicketStats?(days: number): Promise<TicketStats>

@@ -155,25 +155,31 @@ export async function cleanupWorktrees(d: CleanupDeps): Promise<boolean> {
       continue
     }
     if (c.registered && existsSync(c.path)) {
-      const dirty = (await git(c.path, ['status', '--porcelain']).catch(() => '')).trim()
-      if (dirty) {
-        log(`  · ${label}: ${st.name}, but it has uncommitted changes, kept\n`)
+      // Real changes only: a build that rewrites a file with different line endings (LF vs CRLF)
+      // shows in git status but changes nothing, so it doesn't count.
+      const changed = (await git(c.path, ['diff', 'HEAD', '--ignore-cr-at-eol', '--name-only']).catch(() => '')).split(/\r?\n/).filter(Boolean)
+      const untracked = (await git(c.path, ['ls-files', '--others', '--exclude-standard']).catch(() => '')).split(/\r?\n/).filter(Boolean)
+      const files = [...changed, ...untracked.map((f) => `${f} (new)`)]
+      if (files.length) {
+        const shown = files.slice(0, 5).join(', ') + (files.length > 5 ? ` and ${files.length - 5} more` : '')
+        log(`  · ${label}: ${st.name}, but it has uncommitted changes, kept: ${shown}\n`)
         continue
       }
     }
 
-    log(`  ✓ ${label}: ${st.name}, removing…\n`)
-    if (c.registered) await git(repo, ['worktree', 'remove', '--force', c.path]).catch((err: Error) => log(`    git couldn't remove it all (${err.message.split('\n')[0]}); deleting the rest directly\n`))
-    if (existsSync(c.path)) {
-      try {
-        await rm(c.path, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 })
-      } catch (err) {
-        failed++
-        log(`    ✗ couldn't delete the folder: ${(err as Error).message}. Close any editor or terminal open in it and run this again.\n`)
-        continue
-      }
+    // Delete the folder directly, then let git forget it (prune). `git worktree remove` trips over
+    // node_modules on Windows ("Directory not empty", "Filename too long") and is slower.
+    const started = Date.now()
+    try {
+      if (existsSync(c.path)) await rm(c.path, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 })
+    } catch (err) {
+      failed++
+      log(`  ✗ ${label}: ${st.name}, but the folder couldn't be deleted: ${(err as Error).message}. Close any editor or terminal open in it and run this again.\n`)
+      continue
     }
+    if (c.registered) await git(repo, ['worktree', 'prune']).catch(() => undefined)
     removed++
+    log(`  ✓ ${label}: ${st.name}, removed (${Math.round((Date.now() - started) / 1000)}s)\n`)
 
     if (c.branch) {
       const onRemote = (await git(repo, ['branch', '-r', '--contains', c.branch]).catch(() => '')).trim()

@@ -3,6 +3,7 @@ import { groupLabel, shortLabel } from './FilterBar'
 import { DEFAULT_FAILURE_LABEL, isActiveRun, type BoardData, type IssueRelation, type IssueUpdate, type LinearIssue, type LinearLabel, type LinearState, type Run, type StepChoice } from '../../../shared/types'
 import IssueMenu, { type MenuMode } from './IssueMenu'
 import { duration, runColor, runLabel } from '../util'
+import PrChip from './PrChip'
 import {
   Avatar,
   BlockedIcon,
@@ -10,7 +11,6 @@ import {
   PreviewIcon,
   PRIORITY_LABEL,
   PriorityIcon,
-  PullRequestIcon,
   StatusIcon,
   SubIssuesIcon,
   MilestoneIcon
@@ -304,15 +304,7 @@ function Card({
           </button>
         ))}
         {issue.pullRequests.map((pr) => (
-          <button
-            key={pr.url}
-            type="button"
-            className="prop link"
-            title={`Pull request #${pr.number} (${pr.status}) · open on GitHub`}
-            onClick={stop(() => open(pr.url))}
-          >
-            <PullRequestIcon status={pr.status} />#{pr.number}
-          </button>
+          <PrChip key={pr.url} pr={pr} onOpen={stop(() => open(pr.url))} />
         ))}
         {issue.previewUrl && (
           <button type="button" className="prop link" title="Open deploy preview" onClick={stop(() => open(issue.previewUrl!))}>

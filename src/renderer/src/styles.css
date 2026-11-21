@@ -844,3 +844,30 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .builtin-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .builtin-text strong { font-size: 13px; font-weight: 600; color: var(--text); }
 .builtin-text span { font-size: 13px; line-height: 19px; color: var(--text-2); }
+
+/* Pull request status from GitHub: on the card chip and in the ticket panel */
+.pr-chip { gap: 5px; }
+.pr-chip .pr-problem { font-weight: 600; }
+.pr-chip.bad .pr-problem { color: var(--danger-text); }
+.pr-chip.wait .pr-problem { color: var(--warn-text); }
+.pr-checks { flex: none; display: inline-block; }
+.pr-checks.success { color: var(--ok); }
+.pr-checks.failure { color: var(--bad); }
+.pr-checks.pending { width: 10px; height: 10px; border-radius: 50%; border: 1.6px solid var(--line-3); border-top-color: var(--warn); animation: spin .9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .pr-checks.pending { animation-duration: 2.7s; } }
+
+.pr-strip { flex: none; display: flex; flex-direction: column; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.pr-row { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pr-line { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.pr-line .spacer { flex: 1 1 auto; }
+.pr-link { display: inline-flex; align-items: center; gap: 6px; min-width: 0; background: none; border: 0; padding: 0; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.pr-link:hover { text-decoration: underline; }
+.pr-branch { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch; }
+.pr-state { font-size: 12px; font-weight: 600; color: var(--text-2); white-space: nowrap; }
+.pr-state.bad { color: var(--danger-text); }
+.pr-state.wait { color: var(--warn-text); }
+.pr-state.good { color: var(--ok); }
+.pr-state.merged { color: #a371f7; }
+.pr-confirm { display: inline-flex; gap: 6px; }
+.pr-checklist { list-style: none; margin: 0; padding: 0 0 0 2px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.pr-checklist li { display: flex; align-items: center; gap: 7px; min-width: 0; }

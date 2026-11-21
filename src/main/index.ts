@@ -9,6 +9,7 @@ import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetch
 import { globalSet, loadSteps, parseSteps, saveSteps, setForState, setsForState, starterSteps, stringifySteps, STEPS_RELATIVE_PATH } from './steps'
 import { Runner, resolveWorktreePath } from './runner'
 import { cleanupWorktrees } from './worktreeCleanup'
+import { fetchPrStatuses, mergePr } from './github'
 import { getUsage, usageProgress } from './usage'
 import { getTicketStats } from './ticketStats'
 import { checkLimits, getLimits, loadLimits, onLimitsChange } from './limits'
@@ -29,11 +30,38 @@ app.setPath('userData', process.env.NIGHTSHIFT_USER_DATA || join(app.getPath('ap
 // --headless: start with no window (the sign-in task on a host). Opening Night Shift again shows a
 // window in this same process: only one copy runs per data folder, so agents never run twice.
 const HEADLESS = process.argv.includes('--headless')
-const GOT_LOCK = app.requestSingleInstanceLock()
-if (!GOT_LOCK) {
-  app.quit() // another copy has this data folder: it shows its window instead (second-instance)
-} else {
-  app.on('second-instance', () => app.isReady() && showWindow())
+// A development copy (npm run dev) takes over from an older development copy instead of quitting
+// silently: it asks the old one to quit, then waits for the lock. An installed copy never gives way to
+// a development one, and an installed copy started twice just shows the running one's window.
+const DEV = !app.isPackaged
+let GOT_LOCK = app.requestSingleInstanceLock({ takeover: DEV })
+function onSecondInstance(_e: Electron.Event, _argv: string[], _cwd: string, data: unknown): void {
+  if (DEV && (data as { takeover?: boolean } | null)?.takeover) {
+    log.info('a newer development copy started: quitting so it can take over')
+    app.quit()
+    return
+  }
+  if (app.isReady()) showWindow()
+}
+if (GOT_LOCK) app.on('second-instance', onSecondInstance)
+else if (!DEV) app.quit() // the running copy shows its window instead (second-instance)
+
+// Development only: wait up to 15 s for the older copy to quit and release the lock.
+async function waitForLock(): Promise<boolean> {
+  if (GOT_LOCK) return true
+  if (!DEV) return false
+  console.log('Night Shift is already running: asking that copy to quit…')
+  for (let i = 0; i < 30 && !GOT_LOCK; i++) {
+    await new Promise((r) => setTimeout(r, 500))
+    GOT_LOCK = app.requestSingleInstanceLock({ takeover: true })
+  }
+  if (GOT_LOCK) {
+    app.on('second-instance', onSecondInstance)
+    console.log('Took over from the older copy.')
+  } else {
+    console.error('Another Night Shift is still running (an installed copy, or an older version that cannot be asked to quit). Quit it from the tray icon, then run this again.')
+  }
+  return GOT_LOCK
 }
 
 let win: BrowserWindow | null = null
@@ -744,6 +772,27 @@ function registerIpc(): void {
       return { error: `Linear: ${(err as Error).message}` }
     }
   })
+  // Pull requests: only ones linked to a ticket on the board.
+  const boardPrs = (): Set<string> => new Set(board.issues.flatMap((i) => i.pullRequests.map((p) => p.url)))
+  ipcMain.handle('github:prs', async (_e, urls: unknown, refresh?: boolean) => {
+    const known = boardPrs()
+    const list = (Array.isArray(urls) ? urls : []).filter((u): u is string => typeof u === 'string' && known.has(u))
+    try {
+      return { statuses: await fetchPrStatuses(list, Boolean(refresh)) }
+    } catch (err) {
+      return { statuses: {}, error: (err as Error).message }
+    }
+  })
+  ipcMain.handle('github:merge', async (_e, url: unknown) => {
+    if (typeof url !== 'string' || !boardPrs().has(url)) return { error: 'That pull request is not linked to a ticket on the board.' }
+    try {
+      await mergePr(url)
+      log.info(`merged ${url}`)
+      return { ok: true }
+    } catch (err) {
+      return { error: (err as Error).message }
+    }
+  })
   ipcMain.handle('linear:image', async (_e, url: string) => {
     const key = getLinearKey()
     if (!key || typeof url !== 'string') return null
@@ -861,8 +910,8 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
-  if (!GOT_LOCK) return
+app.whenReady().then(async () => {
+  if (!(await waitForLock())) return app.quit()
   // Windows only shows notifications for apps with an ID (matches the installer's appId).
   if (process.platform === 'win32') app.setAppUserModelId('dev.dylanyoung.nightshift')
   loadLimits(join(app.getPath('userData'), 'runs', 'logs'))
@@ -888,7 +937,8 @@ app.whenReady().then(() => {
 // A host keeps running with no window (started headless at sign-in, or the window was closed);
 // the tray icon opens it again or quits.
 app.on('window-all-closed', () => {
-  if (HEADLESS || (getSettings().host.enabled && !remoteMode())) return updateTray()
+  // A development copy always quits with its window, so it can't linger in the tray running old code.
+  if (!DEV && (HEADLESS || (getSettings().host.enabled && !remoteMode()))) return updateTray()
   if (process.platform !== 'darwin') app.quit()
 })
 
