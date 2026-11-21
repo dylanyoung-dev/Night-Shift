@@ -46,7 +46,31 @@ function load(): Stored {
   } catch {
     cache = { ...defaults }
   }
+  migrateLooseSecrets()
   return cache!
+}
+
+// Older builds wrote a key sent from Settings straight into the file as plain text (`githubToken`,
+// `linearApiKey`). Move any such value into encrypted storage and drop the plain copy.
+export function migrateLooseSecrets(): void {
+  if (!cache) return
+  const s = cache as Stored & { githubToken?: unknown; linearApiKey?: unknown }
+  if (s.githubToken === undefined && s.linearApiKey === undefined) return
+  if (!app.isReady()) return // safeStorage needs the app ready; the next load after that does it
+  const enc = safeStorage.isEncryptionAvailable()
+  const gh = typeof s.githubToken === 'string' ? s.githubToken.trim() : ''
+  if (gh && !s.githubTokenEnc && !s.githubTokenPlain) {
+    if (enc) s.githubTokenEnc = safeStorage.encryptString(gh).toString('base64')
+    else s.githubTokenPlain = gh
+  }
+  const lin = typeof s.linearApiKey === 'string' ? s.linearApiKey.trim() : ''
+  if (lin && !s.linearApiKeyEnc && !s.linearApiKeyPlain) {
+    if (enc) s.linearApiKeyEnc = safeStorage.encryptString(lin).toString('base64')
+    else s.linearApiKeyPlain = lin
+  }
+  delete s.githubToken
+  delete s.linearApiKey
+  writeFileSync(file(), JSON.stringify(s, null, 2))
 }
 
 function save(s: Stored): void {
@@ -74,6 +98,7 @@ function decrypt(enc: string | undefined, plain: string | undefined): string | n
 // This machine's GitHub token (pull request status and merging). Never exported or shared.
 export function getGithubToken(): string | null {
   const s = load()
+  migrateLooseSecrets()
   return decrypt(s.githubTokenEnc, s.githubTokenPlain)
 }
 

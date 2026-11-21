@@ -135,11 +135,6 @@ export default function Sidebar({
           </>
         )}
         <span className="spacer" />
-        <div className="rail-runner" role="img" aria-label={`${runner.name}, ${runnerText}`} title={`${runner.name}: ${runnerText}`}>
-          {segments.map((on, i) => (
-            <span key={i} className={on ? 'on' : ''} />
-          ))}
-        </div>
         <button
           type="button"
           className={`rail-btn${view === 'settings' ? ' active' : ''}`}

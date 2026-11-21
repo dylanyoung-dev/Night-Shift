@@ -4,7 +4,7 @@ import { basename, dirname, join } from 'path'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'fs'
 import type { BoardData, HostMachineSettings, ImportGroupKey, IssueUpdate, LinearIssue, LinearState, RemoteTarget, Run, SaveConflict, Settings, SettingsUpdate, SharedSettings, StepSet, StepsFile } from '../shared/types'
 import { globalRunKey, isActiveRun } from '../shared/types'
-import { getGithubToken, getLinearKey, getSettings, updateSettings } from './settings'
+import { getGithubToken, getLinearKey, getSettings, migrateLooseSecrets, updateSettings } from './settings'
 import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, removeLabelByName, updateIssue, fetchIssueDetail, fetchIssueRelations, fetchLinearImage, fetchIssueStates } from './linear'
 import { globalSet, loadSteps, parseSteps, saveSteps, setForState, setsForState, starterSteps, stringifySteps, STEPS_RELATIVE_PATH } from './steps'
 import { Runner, resolveWorktreePath } from './runner'
@@ -932,6 +932,8 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   if (!(await waitForLock())) return app.quit()
+  getSettings()
+  migrateLooseSecrets() // encrypt any key an older build left in the settings file as plain text
   // Windows only shows notifications for apps with an ID (matches the installer's appId).
   if (process.platform === 'win32') app.setAppUserModelId('dev.dylanyoung.nightshift')
   loadLimits(join(app.getPath('userData'), 'runs', 'logs'))
