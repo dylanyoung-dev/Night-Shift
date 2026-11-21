@@ -319,7 +319,19 @@ async function startRunHere(issueId: string, setName?: string): Promise<Run | { 
   }
   if (!issue) return { error: 'That ticket was not found in Linear.' }
   if (runner.isBusy(issue.id)) return { error: `${issue.identifier} already has a run going.` }
-  const sets = setsForState(loadSteps(s.repoPath), issue.stateName)
+  const steps = loadSteps(s.repoPath)
+  let sets = setsForState(steps, issue.stateName)
+  // The board's copy may be behind: the ticket was just moved (here, or on a remote, while this
+  // machine's board hasn't reloaded yet). Ask Linear for its state before saying no.
+  if (!sets.length || (setName && !sets.some((x) => x.name === setName))) {
+    const key = getLinearKey()
+    const fresh = key ? await fetchIssue(key, issue.id).catch(() => undefined) : undefined
+    if (fresh && fresh.stateName !== issue.stateName) {
+      issue = fresh
+      sets = setsForState(steps, issue.stateName)
+      if (key) void syncIssue(key, issue.id).catch(() => undefined) // bring the board up to date too
+    }
+  }
   if (!sets.length) return { error: `No action is set up for "${issue.stateName}".` }
   const set = setName ? sets.find((x) => x.name === setName) : sets.length === 1 ? sets[0] : undefined
   if (!set) return { error: setName ? `"${setName}" doesn't cover "${issue.stateName}" any more.` : `Pick which action to run: ${sets.map((x) => x.label || x.name).join(' or ')}.` }
