@@ -4,14 +4,26 @@ import { useEffect, useState } from 'react'
 // below that an icon rail, a Filters button, sideways-scrolling columns and the ticket as a drawer.
 const WIDE = '(min-width: 1800px)'
 
-export function useWide(): boolean {
-  const [wide, setWide] = useState(() => window.matchMedia(WIDE).matches)
+// The full sidebar needs more room than the rest: below 2200px it folds to the icon rail, so a laptop
+// keeps its width for the board.
+const WIDE_SIDEBAR = '(min-width: 2200px)'
+
+function useMedia(query: string): boolean {
+  const [on, setOn] = useState(() => window.matchMedia(query).matches)
   useEffect(() => {
-    const mq = window.matchMedia(WIDE)
-    const on = (): void => setWide(mq.matches)
-    on()
-    mq.addEventListener('change', on)
-    return () => mq.removeEventListener('change', on)
-  }, [])
-  return wide
+    const mq = window.matchMedia(query)
+    const update = (): void => setOn(mq.matches)
+    update()
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [query])
+  return on
+}
+
+export function useWide(): boolean {
+  return useMedia(WIDE)
+}
+
+export function useWideSidebar(): boolean {
+  return useMedia(WIDE_SIDEBAR)
 }

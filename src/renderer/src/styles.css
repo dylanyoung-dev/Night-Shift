@@ -1846,3 +1846,58 @@ button.prop:disabled:hover { background: var(--tag-bg); color: var(--tag); }
 .au-status dt { color: var(--muted); }
 .au-status dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
 .au-side .btn.danger { border-color: var(--danger-line); }
+
+/* ==========================================================================
+   Settings and Projects: the Actions / Automations header and list, with each section as a card
+   ========================================================================== */
+.actions-head { padding-right: calc(32px + var(--wco)) !important; }
+.actions-title-row h1 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.st-page { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.st-banners { flex: none; padding: 0 32px 12px; background: var(--bg); }
+.st-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.st-nav { flex: 0 0 200px; width: 200px; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 16px 10px; background: var(--list-bg); border-right: 1px solid var(--line); }
+@media (min-width: 1800px) { .st-nav { flex-basis: 240px; width: 240px; } }
+.st-nav-item { display: block; padding: 9px 12px; border-radius: 8px; color: var(--text-2); font-weight: 500; text-decoration: none; }
+.st-nav-item:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
+.st-nav-item.active { color: var(--text); background: var(--surface); box-shadow: 0 0 0 1px var(--accent-line), 0 1px 3px rgba(0, 0, 0, .06); }
+.st-scroll { flex: 1 1 auto; min-width: 0; overflow-y: auto; }
+.st-main { max-width: 980px; margin: 0 auto; padding: 24px 32px calc(100vh - 220px); display: flex; flex-direction: column; gap: 16px; } /* bottom room lets the last card scroll to the top */
+
+:is(.st-page, .pj-body) .settings-section { display: flex; flex-direction: column; gap: 16px; padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; scroll-margin-top: 16px; }
+.st-card-head h2 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text); }
+.st-card-head .section-intro { margin: 3px 0 0; font-size: 12px; line-height: 1.45; color: var(--muted); max-width: 75ch; }
+:is(.st-page, .pj-body) .form { margin: 0; max-width: none; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
+:is(.st-page, .pj-body) .form.single { display: flex; flex-direction: column; gap: 12px; }
+:is(.st-page, .pj-body) .field { gap: 6px; font-size: 12px; font-weight: 500; color: var(--text-3); }
+:is(.st-page, .pj-body) .field .note { font-weight: 400; }
+:is(.st-page, .pj-body) .input { height: 38px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-family: inherit; font-size: 13px; color: var(--text); }
+:is(.st-page, .pj-body) .input:focus { border-color: var(--accent-line); }
+:is(.st-page, .pj-body) .input::placeholder { color: var(--muted); }
+:is(.st-page, .pj-body) select.input { padding: 0 8px; }
+:is(.st-page, .pj-body) .note { color: var(--muted); line-height: 1.45; }
+:is(.st-page, .pj-body) .note.warn { color: var(--warn-text); }
+.st-page .mono { font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
+.st-page .choices, .st-page .choices.three { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.st-page .choice { padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); font-weight: 400; }
+.st-page .choice:hover { border-color: var(--line-hover); }
+.st-page .choice.active { border-color: var(--accent-line); box-shadow: inset 0 0 0 .5px var(--accent-line); background: color-mix(in srgb, var(--accent) 5%, var(--surface)); }
+.st-page .choice input { width: 16px; height: 16px; margin-top: 2px; accent-color: var(--accent); }
+.st-page .choice .sub { color: var(--text-3); line-height: 1.45; }
+.st-page .checks { gap: 8px; }
+.st-page .checks label { padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; font-weight: 400; color: var(--text-2); cursor: pointer; }
+.st-page .checks label:has(input:checked) { border-color: var(--accent-line); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); color: var(--text); }
+.st-page .checks input { accent-color: var(--accent); }
+.st-page .import-preview { background: var(--surface-2); border-color: var(--accent-soft-line); }
+.st-page .check-row input { accent-color: var(--accent); }
+.st-page .inputrow .btn { height: 38px; }
+@media (max-width: 1100px) { :is(.st-page, .pj-body) .form { grid-template-columns: minmax(0, 1fr); } }
+
+.pj-body { max-width: 1080px; margin: 0 auto; padding: 24px 32px 48px; display: flex; flex-direction: column; gap: 16px; }
+.pj-body .projects-cards { margin: 0; gap: 16px; max-width: none; }
+.pj-body .empty-card { margin: 0; max-width: 640px; }
+.pj-body .name-input { max-width: 420px; font-size: 14px; }
+.pj-body .lp-card { background: var(--surface); border-color: var(--line); }
+.pj-body .lp-card:hover { border-color: var(--line-hover); background: var(--surface); }
+.pj-body .lp-card.on { border-color: var(--accent-line); box-shadow: inset 0 0 0 .5px var(--accent-line); background: color-mix(in srgb, var(--accent) 5%, var(--surface)); }
+.pj-body .form.single.action-row { flex-direction: row; flex-wrap: wrap; align-items: center; }
+.pj-body .btn.danger { border-color: var(--danger-line); }

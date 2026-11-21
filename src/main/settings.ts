@@ -4,9 +4,11 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { DEFAULT_HOST_PORT, DEFAULT_WORKTREE_PATH, type Automation, type HostSettings, type NightShiftProject, type Settings, type SettingsUpdate } from '../shared/types'
 
-interface Stored extends Omit<Settings, 'hasLinearKey'> {
+interface Stored extends Omit<Settings, 'hasLinearKey' | 'hasGithubToken'> {
   linearApiKeyEnc?: string // encrypted with the OS keychain (safeStorage), base64
   linearApiKeyPlain?: string // only used when the OS can't encrypt
+  githubTokenEnc?: string // same, for the GitHub token
+  githubTokenPlain?: string
 }
 
 const defaults: Stored = {
@@ -54,8 +56,25 @@ function save(s: Stored): void {
 
 export function getSettings(): Settings {
   const s = load()
-  const { linearApiKeyEnc, linearApiKeyPlain, ...rest } = s
-  return { ...rest, hasLinearKey: Boolean(linearApiKeyEnc || linearApiKeyPlain) }
+  const { linearApiKeyEnc, linearApiKeyPlain, githubTokenEnc, githubTokenPlain, ...rest } = s
+  return { ...rest, hasLinearKey: Boolean(linearApiKeyEnc || linearApiKeyPlain), hasGithubToken: Boolean(githubTokenEnc || githubTokenPlain) }
+}
+
+function decrypt(enc: string | undefined, plain: string | undefined): string | null {
+  if (enc) {
+    try {
+      return safeStorage.decryptString(Buffer.from(enc, 'base64'))
+    } catch {
+      return null
+    }
+  }
+  return plain || null
+}
+
+// This machine's GitHub token (pull request status and merging). Never exported or shared.
+export function getGithubToken(): string | null {
+  const s = load()
+  return decrypt(s.githubTokenEnc, s.githubTokenPlain)
 }
 
 export function getLinearKey(): string | null {
@@ -145,8 +164,10 @@ function cleanHost(raw: unknown): HostSettings {
 
 export function updateSettings(update: SettingsUpdate): Settings {
   const s = { ...load() }
-  const { linearApiKey, ...rest } = update
+  const { linearApiKey, githubToken, ...rest } = update
   Object.assign(s, rest)
+  delete (s as Partial<Settings>).hasLinearKey // read-only flags, never stored
+  delete (s as Partial<Settings>).hasGithubToken
   if (!s.worktreePath?.trim()) s.worktreePath = DEFAULT_WORKTREE_PATH
   s.projects = cleanProjects(s.projects)
   if (s.activeProjectId && !s.projects.some((p) => p.id === s.activeProjectId)) s.activeProjectId = null
@@ -172,6 +193,15 @@ export function updateSettings(update: SettingsUpdate): Settings {
       } else {
         s.linearApiKeyPlain = linearApiKey
       }
+    }
+  }
+  if (githubToken !== undefined) {
+    delete s.githubTokenEnc
+    delete s.githubTokenPlain
+    const t = githubToken.trim()
+    if (t) {
+      if (safeStorage.isEncryptionAvailable()) s.githubTokenEnc = safeStorage.encryptString(t).toString('base64')
+      else s.githubTokenPlain = t
     }
   }
   save(s)

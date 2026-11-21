@@ -4,7 +4,7 @@ import { basename, dirname, join } from 'path'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'fs'
 import type { BoardData, HostMachineSettings, ImportGroupKey, IssueUpdate, LinearIssue, LinearState, RemoteTarget, Run, SaveConflict, Settings, SettingsUpdate, SharedSettings, StepSet, StepsFile } from '../shared/types'
 import { globalRunKey, isActiveRun } from '../shared/types'
-import { getLinearKey, getSettings, updateSettings } from './settings'
+import { getGithubToken, getLinearKey, getSettings, updateSettings } from './settings'
 import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, removeLabelByName, updateIssue, fetchIssueDetail, fetchIssueRelations, fetchLinearImage, fetchIssueStates } from './linear'
 import { globalSet, loadSteps, parseSteps, saveSteps, setForState, setsForState, starterSteps, stringifySteps, STEPS_RELATIVE_PATH } from './steps'
 import { Runner, resolveWorktreePath } from './runner'
@@ -794,7 +794,7 @@ function registerIpc(): void {
     const known = boardPrs()
     const list = (Array.isArray(urls) ? urls : []).filter((u): u is string => typeof u === 'string' && known.has(u))
     try {
-      return { statuses: await fetchPrStatuses(list, Boolean(refresh)) }
+      return { statuses: await fetchPrStatuses(getGithubToken(), list, Boolean(refresh)) }
     } catch (err) {
       return { statuses: {}, error: (err as Error).message }
     }
@@ -802,7 +802,7 @@ function registerIpc(): void {
   ipcMain.handle('github:merge', async (_e, url: unknown) => {
     if (typeof url !== 'string' || !boardPrs().has(url)) return { error: 'That pull request is not linked to a ticket on the board.' }
     try {
-      await mergePr(url)
+      await mergePr(getGithubToken(), url)
       log.info(`merged ${url}`)
       return { ok: true }
     } catch (err) {

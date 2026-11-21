@@ -16,13 +16,14 @@ import UpdateBanner from './components/UpdateBanner'
 import FilterBar, { applyFilters, NO_FILTERS, type Filters } from './components/FilterBar'
 import BranchPicker from './components/BranchPicker'
 import { Icon, PlayIcon } from './components/Icons'
-import { useWide } from './useWide'
+import { useWide, useWideSidebar } from './useWide'
 
 const api = window.nightShift
 
 export default function App(): JSX.Element {
   const [view, setView] = useState<View>('board')
   const wide = useWide()
+  const wideSidebar = useWideSidebar() // the full sidebar only from 2200px
   const [settings, setSettings] = useState<Settings | null>(null)
   const [board, setBoard] = useState<BoardData>({ states: [], issues: [], fetchedAt: null })
   usePrPolling(board.issues) // live pull request status from GitHub for the cards
@@ -283,7 +284,7 @@ export default function App(): JSX.Element {
           setLogRunId(null)
           setView('projects')
         }}
-        wide={wide}
+        wide={wideSidebar}
         runner={{ name: isRemote ? hostName : 'Local runner', busy: runningCount, slots: settings?.maxConcurrent ?? 0 }}
       />
       {logRun && (

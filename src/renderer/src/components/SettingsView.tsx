@@ -24,6 +24,7 @@ const STATE_TYPES = ['triage', 'backlog', 'unstarted', 'started', 'completed', '
 const ALL_SECTIONS = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'linear', label: 'Linear' },
+  { id: 'github', label: 'GitHub' },
   { id: 'machine', label: 'Remote access' },
   { id: 'repo', label: 'Repository', local: true },
   { id: 'worktrees', label: 'Worktrees', local: true },
@@ -36,6 +37,8 @@ const ALL_SECTIONS = [
 export default function SettingsView({ settings, onSaved }: Props): JSX.Element {
   const [form, setForm] = useState({ ...settings })
   const [apiKey, setApiKey] = useState('')
+  const [ghToken, setGhToken] = useState('') // typed but not saved yet; '' keeps the saved one
+  const [removeGh, setRemoveGh] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
@@ -49,7 +52,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
     const root = scrollRef.current
     if (!root) return
     const onScroll = (): void => {
-      const top = root.getBoundingClientRect().top + 140 // just under the pinned header
+      const top = root.getBoundingClientRect().top + 80 // near the top of the scroll area
       let current = SECTIONS[0].id
       for (const s of SECTIONS) {
         const el = document.getElementById(s.id)
@@ -152,10 +155,12 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
 
   async function save(): Promise<void> {
     // activeProjectId is left out: it's set from the sidebar and may have changed since this form opened.
-    const { hasLinearKey: _ignored, activeProjectId: _active, ...rest } = form
+    const { hasLinearKey: _ignored, hasGithubToken: _gh, activeProjectId: _active, ...rest } = form
     setSaving(true)
-    const s = await window.nightShift.saveSettings({ ...rest, ...(apiKey ? { linearApiKey: apiKey } : {}) }).finally(() => setSaving(false))
+    const s = await window.nightShift.saveSettings({ ...rest, ...(apiKey ? { linearApiKey: apiKey } : {}), ...(ghToken ? { githubToken: ghToken } : removeGh ? { githubToken: '' } : {}) }).finally(() => setSaving(false))
     setApiKey('')
+    setGhToken('')
+    setRemoveGh(false)
     if (s.saveError) {
       // Shared settings clashed with an edit elsewhere: nothing shared was saved; keep the form as typed.
       setConflict(s.saveError.message)
@@ -174,6 +179,8 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
   function discard(): void {
     setForm({ ...settings })
     setApiKey('')
+    setGhToken('')
+    setRemoveGh(false)
     setHostLogins(settings.host.allowedLogins.join(', '))
     setDirtyHost(false)
     setConflict(null)
@@ -224,6 +231,8 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
     }
     setPreview(null)
     setApiKey('')
+    setGhToken('')
+    setRemoveGh(false)
     setForm({ ...res.settings })
     onSaved(res.settings)
     setSaved(false)
@@ -231,34 +240,62 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
     setFileMsg({ text: ['Imported.', ...res.notes].join(' '), warn: res.notes.some((n) => n.includes("doesn't exist")) })
   }
 
+  const anyChange = dirty || !!apiKey || !!ghToken || removeGh
+  const jump = (id: string): void => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setActive(id)
+  }
+
   return (
-    <div className="page settings-page" ref={scrollRef}>
-      <div className="header settings-header">
-        <h1>Settings</h1>
-        <div className="right">
-          <SaveStatus dirty={dirty || !!apiKey} saving={saving} saved={saved} onSave={() => void save()} />
-          {(dirty || !!apiKey) && (
-            <button className="btn" type="button" disabled={saving} onClick={discard}>
-              Discard
-            </button>
-          )}
-          <button className="btn primary" type="button" disabled={(!dirty && !apiKey) || saving} onClick={() => void save()}>
-            Save settings
-          </button>
+    <div className="st-page">
+      <header className="actions-head st-head">
+        <div className="actions-title">
+          <div className="actions-title-row">
+            <h1>Settings</h1>
+          </div>
+          <div className="actions-path">
+            {remote ? 'This machine is a remote. Runs, actions and automations come from the host.' : 'How Night Shift connects to Linear and GitHub, and where agents work.'}
+          </div>
         </div>
-        {conflict && (
+        <SaveStatus dirty={anyChange} saving={saving} saved={saved} onSave={() => void save()} />
+        <button className="btn" type="button" disabled={!anyChange || saving} onClick={discard}>
+          Discard
+        </button>
+        <button className="btn primary" type="button" disabled={!anyChange || saving} onClick={() => void save()}>
+          Save settings
+        </button>
+      </header>
+      {conflict && (
+        <div className="st-banners">
           <ConflictBanner
             message={conflict}
             onLoadTheirs={discard}
             onKeepMine={() => (setForm((f) => ({ ...f, sharedRevs: settings.sharedRevs })), setConflict(null))}
           />
-        )}
-      </div>
+        </div>
+      )}
 
-      <div className="settings-layout">
-        <div className="settings-main">
+      <div className="st-body">
+        <nav className="st-nav" aria-label="Settings sections">
+          {SECTIONS.map((s) => (
+            <a
+              key={s.id}
+              href={`#${s.id}`}
+              className={`st-nav-item${active === s.id ? ' active' : ''}`}
+              aria-current={active === s.id ? 'true' : undefined}
+              onClick={(e) => {
+                e.preventDefault()
+                jump(s.id)
+              }}
+            >
+              {s.label}
+            </a>
+          ))}
+        </nav>
+        <div className="st-scroll" ref={scrollRef}>
+        <div className="st-main">
         <section id="appearance" className="settings-section" aria-labelledby="appearance-title">
-          <div className="section-side">
+          <div className="st-card-head">
             <h2 id="appearance-title">Appearance</h2>
             <p className="section-intro">Applies straight away. This machine only; it isn&apos;t in the exported file.</p>
           </div>
@@ -286,7 +323,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
           </div>
         </section>
         <section id="linear" className="settings-section" aria-labelledby="linear-title">
-          <div className="section-side">
+          <div className="st-card-head">
             <h2 id="linear-title">Linear</h2>
             <p className="section-intro">Where tickets come from and how often Night Shift checks for changes.</p>
           </div>
@@ -367,8 +404,48 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
             </div>
           </div>
         </section>
+        <section id="github" className="settings-section" aria-labelledby="github-title">
+          <div className="st-card-head">
+            <h2 id="github-title">GitHub</h2>
+            <p className="section-intro">Shows each ticket's pull request checks and conflicts, and lets you merge from the ticket panel.</p>
+          </div>
+          <div className="form">
+            <label className="field">
+              GitHub token {settings.hasGithubToken && !removeGh ? '(saved, leave blank to keep it)' : ''}
+              <input
+                className="input"
+                type="password"
+                autoComplete="off"
+                value={ghToken}
+                placeholder={settings.hasGithubToken && !removeGh ? '••••••••' : 'github_pat_…'}
+                onChange={(e) => {
+                  setGhToken(e.target.value)
+                  setRemoveGh(false)
+                  setSaved(false)
+                }}
+              />
+            </label>
+            <p className="note">
+              Make a fine-grained token on GitHub (Settings › Developer settings › Personal access tokens) for the repository, with Pull requests: Read and write, Contents: Read and write (to delete the branch after a merge) and Commit statuses: Read. Only read access is needed to see checks. It stays on this machine and isn&apos;t shared or exported.
+            </p>
+            {settings.hasGithubToken && !ghToken && (
+              <div>
+                <button
+                  className="btn small"
+                  type="button"
+                  onClick={() => {
+                    setRemoveGh((x) => !x)
+                    setSaved(false)
+                  }}
+                >
+                  {removeGh ? 'Keep the saved token' : 'Remove the saved token'}
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
         <section id="machine" className="settings-section" aria-labelledby="machine-title">
-          <div className="section-side">
+          <div className="st-card-head">
             <h2 id="machine-title">Remote access</h2>
             <p className="section-intro">
               Use Night Shift across your machines over Tailscale. One machine is the host and runs every agent; others connect to it as remotes. A machine is one or the other, never both.
@@ -514,7 +591,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
         </section>
         {remote && (
           <section id="hostmachine" className="settings-section" aria-labelledby="hostmachine-title">
-            <div className="section-side">
+            <div className="st-card-head">
               <h2 id="hostmachine-title">Host machine</h2>
               <p className="section-intro">Set on the host. Shown here for reference.</p>
             </div>
@@ -542,7 +619,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
         {!remote && (
           <>
         <section id="repo" className="settings-section" aria-labelledby="repo-title">
-          <div className="section-side">
+          <div className="st-card-head">
             <h2 id="repo-title">Repository</h2>
             <p className="section-intro">The checkout agents work in, and the branch new ticket branches start from.</p>
           </div>
@@ -630,7 +707,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
           </div>
         </section>
         <section id="worktrees" className="settings-section" aria-labelledby="worktrees-title">
-          <div className="section-side">
+          <div className="st-card-head">
             <h2 id="worktrees-title">Worktrees</h2>
             <p className="section-intro">Where each run works. An action can override this on the Actions page.</p>
           </div>
@@ -681,7 +758,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
           </div>
         </section>
         <section id="runs" className="settings-section" aria-labelledby="runs-title">
-          <div className="section-side">
+          <div className="st-card-head">
             <h2 id="runs-title">Runs</h2>
             <p className="section-intro">How many local runs can go at once, across all actions.</p>
           </div>
@@ -702,7 +779,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
           </>
         )}
         <section id="sharing" className="settings-section" aria-labelledby="sharing-title">
-          <div className="section-side">
+          <div className="st-card-head">
             <h2 id="sharing-title">Share settings</h2>
             <p className="section-intro">Move your projects, automations and general settings to another machine.</p>
           </div>
@@ -763,7 +840,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
           </div>
         </section>
         <section id="about" className="settings-section" aria-labelledby="about-title">
-          <div className="section-side">
+          <div className="st-card-head">
             <h2 id="about-title">About</h2>
             <p className="section-intro">The version you&apos;re running and its updates.</p>
           </div>
@@ -772,24 +849,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
           </div>
         </section>
         </div>
-        <nav className="settings-toc" aria-label="Settings sections">
-          <div className="listlabel">On this page</div>
-          {SECTIONS.map((s) => (
-            <a
-              key={s.id}
-              href={`#${s.id}`}
-              className={`toc-link${active === s.id ? ' active' : ''}`}
-              aria-current={active === s.id ? 'true' : undefined}
-              onClick={(e) => {
-                e.preventDefault()
-                document.getElementById(s.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                setActive(s.id)
-              }}
-            >
-              {s.label}
-            </a>
-          ))}
-        </nav>
+        </div>
       </div>
     </div>
   )

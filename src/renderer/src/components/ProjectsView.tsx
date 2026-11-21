@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { LinearProject, NightShiftProject, Settings } from '../../../shared/types'
 import ConflictBanner from './ConflictBanner'
 import SaveStatus from './SaveStatus'
+import { useWide } from '../useWide'
 
 interface Props {
   settings: Settings
@@ -16,6 +17,7 @@ function copy(p: NightShiftProject[]): NightShiftProject[] {
 
 // Night Shift projects: named slices of the team's tickets, each linked to Linear projects.
 export default function ProjectsView({ settings, linearProjects, onSaved, onShow }: Props): JSX.Element {
+  const wide = useWide()
   const [projects, setProjects] = useState<NightShiftProject[]>(() => copy(settings.projects))
   const [baseRevs, setBaseRevs] = useState(settings.sharedRevs) // revisions of what's being edited
   const [conflict, setConflict] = useState<string | null>(null)
@@ -99,47 +101,59 @@ export default function ProjectsView({ settings, linearProjects, onSaved, onShow
 
   return (
     <>
-      <div className="statelist">
-        <div className="listlabel">Projects</div>
-        {projects.map((p, i) => (
-          <button key={p.id} type="button" className={`state${i === selected ? ' active' : ''}`} onClick={() => setSelected(i)}>
-            <span className="project-row">
-              {p.name || 'Untitled'}
-              {isActive(p) && <span className="badge">On board</span>}
-            </span>
-            <span className="sub">{p.linearProjectIds.length ? linkedNames(p) : 'Not linked yet'}</span>
-          </button>
-        ))}
-        {!projects.length && <div className="note" style={{ padding: '0 12px' }}>No projects yet.</div>}
-        <button className="btn" type="button" style={{ margin: '10px 12px 0' }} onClick={addProject}>
-          New project
-        </button>
-      </div>
-
-      <div className="page projects-page">
-        <div className="header">
-          <h1>{current?.name || 'Projects'}</h1>
-          <div className="right">
-            <SaveStatus dirty={dirty} saving={saving} saved={saved} onSave={() => void save()} />
-            {dirty && (
-              <button className="btn" type="button" onClick={discard} disabled={saving}>
-                Discard
-              </button>
-            )}
-            <button className="btn primary" type="button" onClick={() => void save()} disabled={!dirty || saving}>
-              Save projects
-            </button>
-          </div>
-          {conflict && <ConflictBanner message={conflict} onLoadTheirs={discard} onKeepMine={() => (setBaseRevs(settings.sharedRevs), setConflict(null))} />}
+      <nav className={`actions-list${wide ? ' wide' : ''}`} aria-label="Projects">
+        <div className="actions-list-head">
+          <h1>Projects</h1>
+          <span className="count">{projects.length}</span>
         </div>
-        <p className="note">
-          A project shows only the tickets in the Linear projects you link to it. Projects appear under Linear in the left nav; pick one there to switch the
-          board.
-        </p>
+        <div className="actions-list-items">
+          {projects.map((p, i) => (
+            <button key={p.id} type="button" className={`action-item${i === selected ? ' active' : ''}`} aria-current={i === selected ? 'true' : undefined} onClick={() => setSelected(i)}>
+              <span className="action-item-top">
+                <span className="action-item-name">{p.name || 'Untitled'}</span>
+                {isActive(p) && <span className="onoff on">On board</span>}
+              </span>
+              <span className="action-item-where">{p.linearProjectIds.length ? linkedNames(p) : 'Not linked yet'}</span>
+            </button>
+          ))}
+          {!projects.length && <p className="note">No projects yet.</p>}
+        </div>
+        <div className="actions-list-foot one">
+          <button className="btn" type="button" onClick={addProject}>
+            New project
+          </button>
+        </div>
+      </nav>
 
+      <main className="actions-editor">
+        <header className="actions-head">
+          <div className="actions-title">
+            <div className="actions-title-row">
+              <h2>{current?.name || 'Projects'}</h2>
+            </div>
+            <div className="actions-path">
+              A project shows only the tickets in the Linear projects you link to it. Pick one under Linear in the left nav to switch the board.
+            </div>
+          </div>
+          <SaveStatus dirty={dirty} saving={saving} saved={saved} onSave={() => void save()} />
+          <button className="btn" type="button" onClick={discard} disabled={!dirty || saving}>
+            Discard
+          </button>
+          <button className="btn primary" type="button" onClick={() => void save()} disabled={!dirty || saving}>
+            Save projects
+          </button>
+        </header>
+
+        <div className="actions-scroll">
+        {conflict && (
+          <div className="actions-banners">
+            <ConflictBanner message={conflict} onLoadTheirs={discard} onKeepMine={() => (setBaseRevs(settings.sharedRevs), setConflict(null))} />
+          </div>
+        )}
+        <div className="pj-body">
         {!current && (
           <div className="settings-section empty-card">
-            <div className="section-side">
+            <div className="st-card-head">
               <h2>Start with a project</h2>
               <p className="section-intro">For example AmplifyUP, linked to the Amplify UP project in Linear, so the board shows only its tickets.</p>
             </div>
@@ -154,7 +168,7 @@ export default function ProjectsView({ settings, linearProjects, onSaved, onShow
         {current && (
           <div className="projects-cards">
             <section className="settings-section" aria-labelledby="proj-name">
-              <div className="section-side">
+              <div className="st-card-head">
                 <h2 id="proj-name">Name</h2>
                 <p className="section-intro">Shown in the left nav and at the top of the board.</p>
               </div>
@@ -164,7 +178,7 @@ export default function ProjectsView({ settings, linearProjects, onSaved, onShow
             </section>
 
             <section className="settings-section" aria-labelledby="proj-linear">
-              <div className="section-side">
+              <div className="st-card-head">
                 <h2 id="proj-linear">Linear projects</h2>
                 <p className="section-intro">Tickets in any of these show on the board. Pick one or more.</p>
                 <p className="section-intro">{current.linearProjectIds.length} linked</p>
@@ -207,7 +221,7 @@ export default function ProjectsView({ settings, linearProjects, onSaved, onShow
             </section>
 
             <section className="settings-section" aria-labelledby="proj-actions">
-              <div className="section-side">
+              <div className="st-card-head">
                 <h2 id="proj-actions">Actions</h2>
                 <p className="section-intro">{isActive(current) ? 'This project is on the board now.' : 'Show this project on the board, or remove it.'}</p>
               </div>
@@ -228,7 +242,9 @@ export default function ProjectsView({ settings, linearProjects, onSaved, onShow
             </section>
           </div>
         )}
-      </div>
+        </div>
+        </div>
+      </main>
     </>
   )
 }

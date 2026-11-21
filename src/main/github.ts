@@ -1,25 +1,35 @@
-import { execFile } from 'child_process'
-import { tmpdir } from 'os'
 import type { PrCheck, PrStatus } from '../shared/types'
 
-// Pull request status and merging, through the GitHub CLI (`gh`) and this machine's own login, the
-// same way each machine uses its own Linear key. Nothing here stores a GitHub token.
+// Pull request status and merging, with this machine's GitHub token (Settings › GitHub), the same way
+// each machine uses its own Linear key. The token is read per call and never stored here.
 
 const PR_URL = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)/
 const FRESH_MS = 30_000
 const cache = new Map<string, { at: number; status: PrStatus }>()
 
-function gh(args: string[], timeout = 30_000): Promise<string> {
-  return new Promise((res, rej) => {
-    // Run outside any repo, so gh acts on the PR URL only (and never touches a local checkout).
-    execFile('gh', args, { cwd: tmpdir(), timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (!err) return res(stdout)
-      const msg = (stderr || err.message).trim()
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') rej(new Error('GitHub CLI (gh) is not installed on this machine. Install it and run gh auth login.'))
-      else if (/auth login|not logged in|authentication/i.test(msg)) rej(new Error('GitHub CLI is not signed in. Run gh auth login.'))
-      else rej(new Error(msg.split('\n')[0]))
-    })
+const NO_TOKEN = 'Add a GitHub token in Settings › GitHub to see pull request checks and merge from here.'
+
+async function api(token: string | null, method: string, path: string, body?: unknown): Promise<unknown> {
+  if (!token) throw new Error(NO_TOKEN)
+  const res = await fetch(`https://api.github.com${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'night-shift',
+      ...(body ? { 'Content-Type': 'application/json' } : {})
+    },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(30_000)
   })
+  const text = await res.text()
+  const json = text ? (JSON.parse(text) as Record<string, unknown>) : {}
+  if (res.status === 401) throw new Error('GitHub turned down the token. Check it in Settings › GitHub.')
+  if (!res.ok) throw new Error(`GitHub: ${String(json.message ?? res.statusText)}`)
+  const errors = json.errors as { message: string }[] | undefined
+  if (errors?.length && !json.data) throw new Error(`GitHub: ${errors[0].message}`)
+  return json
 }
 
 const FIELDS = `
@@ -107,7 +117,7 @@ function statusOf(repo: RawRepo, p: RawPr): PrStatus {
 const lit = (s: string): string => JSON.stringify(s)
 
 // Status of each pull request URL, in one GraphQL call. Results stay fresh for 30 s unless refresh is set.
-export async function fetchPrStatuses(urls: string[], refresh = false): Promise<Record<string, PrStatus>> {
+export async function fetchPrStatuses(token: string | null, urls: string[], refresh = false): Promise<Record<string, PrStatus>> {
   const out: Record<string, PrStatus> = {}
   const wanted: { url: string; owner: string; name: string; number: number }[] = []
   for (const url of new Set(urls)) {
@@ -122,8 +132,8 @@ export async function fetchPrStatuses(urls: string[], refresh = false): Promise<
     const query = `query {\n${batch
       .map((w, j) => `p${j}: repository(owner: ${lit(w.owner)}, name: ${lit(w.name)}) { squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed pullRequest(number: ${w.number}) { ${FIELDS} } }`)
       .join('\n')}\n}`
-    const raw = await gh(['api', 'graphql', '-f', `query=${query}`])
-    const data = (JSON.parse(raw) as { data?: Record<string, RawRepo | null> }).data ?? {}
+    const json = (await api(token, 'POST', '/graphql', { query })) as { data?: Record<string, RawRepo | null> }
+    const data = json.data ?? {}
     batch.forEach((w, j) => {
       const repo = data[`p${j}`]
       if (!repo?.pullRequest) return
@@ -138,13 +148,22 @@ export async function fetchPrStatuses(urls: string[], refresh = false): Promise<
 
 // Merges with the repo's preferred method and deletes the branch on GitHub. The local branch and
 // worktree are left for the "Clean up worktrees" step, so an open editor or a running agent isn't disturbed.
-export async function mergePr(url: string): Promise<void> {
-  if (!PR_URL.test(url)) throw new Error('Not a GitHub pull request link.')
-  const [status] = Object.values(await fetchPrStatuses([url], true))
+export async function mergePr(token: string | null, url: string): Promise<void> {
+  const m = PR_URL.exec(url)
+  if (!m) throw new Error('Not a GitHub pull request link.')
+  const [, owner, name, number] = m
+  const [status] = Object.values(await fetchPrStatuses(token, [url], true))
   if (!status) throw new Error("Couldn't read that pull request from GitHub.")
   if (status.state === 'merged') return
   if (status.state !== 'open') throw new Error(status.state === 'draft' ? 'It is still a draft. Mark it ready for review first.' : 'It is closed.')
   if (status.merge === 'conflicts') throw new Error('It has merge conflicts. Resolve them first.')
-  await gh(['pr', 'merge', url, `--${status.mergeMethod}`, '--delete-branch'], 120_000)
+  const repo = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`
+  await api(token, 'PUT', `${repo}/pulls/${number}/merge`, { merge_method: status.mergeMethod })
   cache.delete(url)
+  // Delete the branch, but only when it lives in this repo (not a fork) and isn't the base of anything.
+  const pr = (await api(token, 'GET', `${repo}/pulls/${number}`).catch(() => null)) as { head?: { ref?: string; repo?: { full_name?: string } | null } } | null
+  const head = pr?.head
+  if (head?.ref && head.repo?.full_name?.toLowerCase() === `${owner}/${name}`.toLowerCase()) {
+    await api(token, 'DELETE', `${repo}/git/refs/heads/${head.ref.split('/').map(encodeURIComponent).join('/')}`).catch(() => undefined)
+  }
 }

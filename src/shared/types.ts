@@ -146,14 +146,16 @@ export interface Settings {
   sharedRevs?: Record<string, string> // revisions of the shared items, sent back with a save
   saveError?: { message: string; conflict?: SaveConflict } // the last save was refused (shared items)
   hasLinearKey: boolean // the key itself never leaves the main process
+  hasGithubToken: boolean // likewise: for pull request status and merging
 }
 
 // The settings every machine shares (one copy, on the host), and the host machine's own.
 export type SharedSettings = Pick<Settings, 'linearTeamKey' | 'baseBranch' | 'worktreeMode' | 'pollSeconds' | 'projects' | 'automations'>
 export type HostMachineSettings = Pick<Settings, 'repoPath' | 'worktreePath' | 'maxConcurrent'>
 
-export interface SettingsUpdate extends Partial<Omit<Settings, 'hasLinearKey'>> {
+export interface SettingsUpdate extends Partial<Omit<Settings, 'hasLinearKey' | 'hasGithubToken'>> {
   linearApiKey?: string
+  githubToken?: string // '' removes it
 }
 
 export interface LinearState {
