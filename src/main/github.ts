@@ -1,4 +1,5 @@
 import type { PrCheck, PrStatus } from '../shared/types'
+import { log } from './log'
 
 // Pull request status and merging, with this machine's GitHub token (Settings › GitHub), the same way
 // each machine uses its own Linear key. The token is read per call and never stored here.
@@ -25,6 +26,7 @@ async function api(token: string | null, method: string, path: string, body?: un
   })
   const text = await res.text()
   const json = text ? (JSON.parse(text) as Record<string, unknown>) : {}
+  if (!res.ok) log.warn(`github: ${method} ${path} → ${res.status} ${String(json.message ?? res.statusText)} (scopes: ${res.headers.get('x-oauth-scopes') ?? 'n/a'})`)
   if (res.status === 401) throw new Error('GitHub turned down the token. Check it in Settings › GitHub.')
   if (!res.ok) throw new Error(`GitHub: ${String(json.message ?? res.statusText)}`)
   const errors = json.errors as { message: string }[] | undefined
@@ -32,10 +34,10 @@ async function api(token: string | null, method: string, path: string, body?: un
   return json
 }
 
-const FIELDS = `
-  number url state isDraft mergeable mergeStateStatus reviewDecision headRefName baseRefName
-  autoMergeRequest { enabledAt }
-  commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { nodes {
+// Asked in separate calls, so a token that can read pull requests but not checks still gets the rest.
+const FIELDS_FULL = 'number url state isDraft mergeable mergeStateStatus reviewDecision headRefName baseRefName headRefOid autoMergeRequest { enabledAt }'
+const FIELDS_MIN = 'number url state isDraft mergeable headRefName baseRefName headRefOid'
+const CHECK_FIELDS = `commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
     __typename
     ... on CheckRun { name status conclusion detailsUrl }
     ... on StatusContext { context state targetUrl }
@@ -51,8 +53,9 @@ interface RawPr {
   reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null
   headRefName: string
   baseRefName: string
-  autoMergeRequest: unknown
-  commits: { nodes: { commit: { statusCheckRollup: { state: string; contexts: { nodes: Record<string, string | null>[] } } | null } }[] }
+  headRefOid?: string
+  autoMergeRequest?: unknown
+  commits?: { nodes: { commit: { statusCheckRollup: { state: string; contexts: { nodes: Record<string, string | null>[] } } | null } }[] }
 }
 interface RawRepo {
   squashMergeAllowed: boolean
@@ -78,8 +81,7 @@ function checkOf(n: Record<string, string | null>): PrCheck {
   return { name: n.context ?? 'status', state: s === 'SUCCESS' ? 'success' : s === 'PENDING' || s === 'EXPECTED' ? 'pending' : 'failure', url: n.targetUrl ?? null }
 }
 
-function statusOf(repo: RawRepo, p: RawPr): PrStatus {
-  const items = (p.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? []).map(checkOf)
+function statusOf(repo: RawRepo, p: RawPr, items: PrCheck[]): PrStatus {
   const checks: PrStatus['checks']['state'] = items.some((c) => c.state === 'failure')
     ? 'failure'
     : items.some((c) => c.state === 'pending')
@@ -116,10 +118,55 @@ function statusOf(repo: RawRepo, p: RawPr): PrStatus {
 
 const lit = (s: string): string => JSON.stringify(s)
 
-// Status of each pull request URL, in one GraphQL call. Results stay fresh for 30 s unless refresh is set.
-export async function fetchPrStatuses(token: string | null, urls: string[], refresh = false): Promise<Record<string, PrStatus>> {
+let graphqlChecksRefused = false // set when GitHub refuses checks over GraphQL (fine-grained tokens)
+type GqlReply<T> = { data?: Record<string, T | null>; errors?: { message: string; type?: string }[] }
+const errText = (e: { message: string; type?: string }[] | undefined): string => (e ?? []).slice(0, 5).map((x) => `${x.type ?? ''} ${x.message}`.trim()).join(' | ')
+
+interface Wanted {
+  url: string
+  owner: string
+  name: string
+  number: number
+}
+
+async function gql<T>(token: string | null, batch: Wanted[], body: (w: Wanted) => string): Promise<GqlReply<T>> {
+  const parts = batch.map((w, j) => `p${j}: repository(owner: ${lit(w.owner)}, name: ${lit(w.name)}) { ${body(w)} }`)
+  const query = `query { ${parts.join(' ')} }`
+  const reply = (await api(token, 'POST', '/graphql', { query })) as GqlReply<T>
+  if (reply.errors?.length) log.warn(`github: graphql: ${errText(reply.errors)}`)
+  return reply
+}
+
+// Checks for one commit through the REST API: the fallback when GraphQL won't give them. Fine-grained
+// tokens can't read check runs at all, so GitHub Actions jobs (Actions: Read) stand in for them, plus
+// commit statuses (Commit statuses: Read) from services like Vercel.
+async function restChecks(token: string | null, w: Wanted, sha: string): Promise<PrCheck[]> {
+  const repo = `/repos/${encodeURIComponent(w.owner)}/${encodeURIComponent(w.name)}`
+  const items: PrCheck[] = []
+  const runs = (await api(token, 'GET', `${repo}/commits/${sha}/check-runs?per_page=100`).catch(() => null)) as { check_runs?: Record<string, string | null>[] } | null
+  for (const c of runs?.check_runs ?? []) items.push(checkOf({ __typename: 'CheckRun', name: c.name, status: (c.status ?? '').toUpperCase(), conclusion: (c.conclusion ?? '').toUpperCase(), detailsUrl: c.details_url ?? c.html_url }))
+  let via = `check runs ${items.length}`
+  if (!items.length) {
+    const wf = (await api(token, 'GET', `${repo}/actions/runs?head_sha=${sha}&per_page=50`).catch(() => null)) as { workflow_runs?: { id: number; name: string; status: string; conclusion: string | null; html_url: string }[] } | null
+    for (const run of wf?.workflow_runs ?? []) {
+      const jobs = (await api(token, 'GET', `${repo}/actions/runs/${run.id}/jobs?per_page=100`).catch(() => null)) as { jobs?: { name: string; status: string; conclusion: string | null; html_url: string }[] } | null
+      const list = jobs?.jobs?.length ? jobs.jobs : [run]
+      for (const j of list) items.push(checkOf({ __typename: 'CheckRun', name: j.name, status: j.status.toUpperCase(), conclusion: (j.conclusion ?? '').toUpperCase(), detailsUrl: j.html_url }))
+    }
+    via += `, actions ${items.length}`
+  }
+  const before = items.length
+  const st = (await api(token, 'GET', `${repo}/commits/${sha}/status`).catch(() => null)) as { statuses?: Record<string, string | null>[] } | null
+  for (const c of st?.statuses ?? []) items.push(checkOf({ __typename: 'StatusContext', context: c.context, state: (c.state ?? '').toUpperCase(), targetUrl: c.target_url }))
+  log.info(`github: #${w.number} checks via REST: ${via}, statuses ${items.length - before}`)
+  return items
+}
+
+// Status of each pull request URL. Results stay fresh for 30 s unless refresh is set.
+export async function fetchPrStatuses(token: string | null, urls: string[], refresh = false): Promise<{ statuses: Record<string, PrStatus>; error?: string }> {
   const out: Record<string, PrStatus> = {}
-  const wanted: { url: string; owner: string; name: string; number: number }[] = []
+  let error: string | undefined
+  const wanted: Wanted[] = []
   for (const url of new Set(urls)) {
     const m = PR_URL.exec(url)
     if (!m) continue
@@ -129,21 +176,56 @@ export async function fetchPrStatuses(token: string | null, urls: string[], refr
   }
   for (let i = 0; i < wanted.length; i += 40) {
     const batch = wanted.slice(i, i + 40)
-    const query = `query {\n${batch
-      .map((w, j) => `p${j}: repository(owner: ${lit(w.owner)}, name: ${lit(w.name)}) { squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed pullRequest(number: ${w.number}) { ${FIELDS} } }`)
-      .join('\n')}\n}`
-    const json = (await api(token, 'POST', '/graphql', { query })) as { data?: Record<string, RawRepo | null> }
-    const data = json.data ?? {}
+    // 1. The pull requests themselves. If GitHub refuses some fields, ask again with only the basics.
+    const repoFields = 'squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed'
+    let reply = await gql<RawRepo>(token, batch, (w) => `${repoFields} pullRequest(number: ${w.number}) { ${FIELDS_FULL} }`)
+    const got = (r: GqlReply<RawRepo>): number => batch.filter((_w, j) => r.data?.[`p${j}`]?.pullRequest).length
+    if (got(reply) < batch.length && reply.errors?.length) {
+      const retry = await gql<RawRepo>(token, batch, (w) => `pullRequest(number: ${w.number}) { ${FIELDS_MIN} }`)
+      if (got(retry) > got(reply)) reply = retry
+    }
+    const data = reply.data ?? {}
+    const missing = batch.filter((_w, j) => !data[`p${j}`]?.pullRequest)
+    log.info(`github: asked for ${batch.length} pull requests, got ${batch.length - missing.length}`)
+    if (missing.length) {
+      const first = reply.errors?.[0]
+      const repoName = `${missing[0].owner}/${missing[0].name}`
+      error =
+        !first || first.type === 'NOT_FOUND' || /resolve to a Repository/i.test(first.message)
+          ? `GitHub won't show ${repoName} to this token. Give the token access to that repository, or use a classic token with the repo scope.`
+          : `GitHub: ${first.message}`
+    }
+
+    // 2. Their checks, in a separate call; per pull request through REST if GraphQL refuses.
+    const found = batch.filter((_w, j) => data[`p${j}`]?.pullRequest)
+    const checks = new Map<string, PrCheck[]>()
+    if (found.length) {
+      const cr = graphqlChecksRefused ? ({} as GqlReply<{ pullRequest: RawPr | null }>) : await gql<{ pullRequest: RawPr | null }>(token, found, (w) => `pullRequest(number: ${w.number}) { ${CHECK_FIELDS} }`).catch((err: Error) => {
+        log.warn(`github: checks query failed: ${err.message}`)
+        return {} as GqlReply<{ pullRequest: RawPr | null }>
+      })
+      // A fine-grained token is refused here every time; after the first no, go straight to REST.
+      if (cr.errors?.some((e) => e.type === 'FORBIDDEN')) graphqlChecksRefused = true
+      for (const [j, w] of found.entries()) {
+        const rollup = cr.data?.[`p${j}`]?.pullRequest?.commits?.nodes[0]?.commit.statusCheckRollup
+        if (rollup) checks.set(w.url, rollup.contexts.nodes.map(checkOf))
+        else {
+          const sha = data[`p${batch.indexOf(w)}`]?.pullRequest?.headRefOid
+          checks.set(w.url, sha ? await restChecks(token, w, sha) : [])
+        }
+      }
+    }
+
     batch.forEach((w, j) => {
       const repo = data[`p${j}`]
       if (!repo?.pullRequest) return
-      const status = statusOf(repo, repo.pullRequest)
+      const status = statusOf(repo, repo.pullRequest, checks.get(w.url) ?? [])
       cache.set(w.url, { at: Date.now(), status })
       out[w.url] = status
     })
   }
   if (cache.size > 300) for (const k of [...cache.keys()].slice(0, cache.size - 300)) cache.delete(k)
-  return out
+  return { statuses: out, error }
 }
 
 // Merges with the repo's preferred method and deletes the branch on GitHub. The local branch and
@@ -152,8 +234,9 @@ export async function mergePr(token: string | null, url: string): Promise<void> 
   const m = PR_URL.exec(url)
   if (!m) throw new Error('Not a GitHub pull request link.')
   const [, owner, name, number] = m
-  const [status] = Object.values(await fetchPrStatuses(token, [url], true))
-  if (!status) throw new Error("Couldn't read that pull request from GitHub.")
+  const got = await fetchPrStatuses(token, [url], true)
+  const [status] = Object.values(got.statuses)
+  if (!status) throw new Error(got.error ?? "Couldn't read that pull request from GitHub.")
   if (status.state === 'merged') return
   if (status.state !== 'open') throw new Error(status.state === 'draft' ? 'It is still a draft. Mark it ready for review first.' : 'It is closed.')
   if (status.merge === 'conflicts') throw new Error('It has merge conflicts. Resolve them first.')

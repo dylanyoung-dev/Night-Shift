@@ -806,7 +806,7 @@ function registerIpc(): void {
     const known = boardPrs()
     const list = (Array.isArray(urls) ? urls : []).filter((u): u is string => typeof u === 'string' && known.has(u))
     try {
-      return { statuses: await fetchPrStatuses(getGithubToken(), list, Boolean(refresh)) }
+      return await fetchPrStatuses(getGithubToken(), list, Boolean(refresh))
     } catch (err) {
       return { statuses: {}, error: (err as Error).message }
     }

@@ -31,18 +31,20 @@ export function prSummary(s: PrStatus): string {
 }
 
 export default function PrChip({ pr, onOpen }: { pr: LinearPullRequest; onOpen(e: React.MouseEvent): void }): JSX.Element {
-  const { status } = usePrStatus(pr.url)
+  const { status, error } = usePrStatus(pr.url)
+  const failed = !status && !!error && pr.status !== 'merged' && pr.status !== 'closed'
   const problem = status ? prProblem(status) : null
   return (
     <button
       type="button"
       className={`prop link pr-chip${problem ? ` ${problem.tone}` : ''}`}
-      title={`${status ? prSummary(status) : `Pull request #${pr.number} (${pr.status})`} · open on GitHub`}
+      title={`${status ? prSummary(status) : failed ? `Couldn't get checks: ${error}` : `Pull request #${pr.number} (${pr.status})`} · open on GitHub`}
       onClick={onOpen}
     >
       <PullRequestIcon status={status?.state ?? pr.status} />#{pr.number}
       {status && <ChecksIcon state={status.checks.state} />}
       {problem && <span className="pr-problem">{problem.text}</span>}
+      {failed && <span className="pr-problem pr-unknown" aria-label="Couldn't get checks from GitHub">?</span>}
     </button>
   )
 }
