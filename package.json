@@ -1,6 +1,6 @@
 {
   "name": "night-shift",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "description": "Night Shift: Linear board plus running agents for my agentic software factory",
   "main": "out/main/index.js",
