@@ -1,21 +1,21 @@
 import type { RunStatus, StepStatus } from '../../shared/types'
 
 export const runColor: Record<RunStatus, string> = {
-  queued: '#d29922',
-  running: '#3fb950',
-  waiting: '#f2994a',
-  done: '#8fb0ff',
-  failed: '#f85149',
-  stopped: '#6e7681'
+  queued: 'var(--queued)',
+  running: 'var(--running)',
+  waiting: 'var(--attn)',
+  done: 'var(--done)',
+  failed: 'var(--failed)',
+  stopped: 'var(--stopped)'
 }
 
 export const stepColor: Record<StepStatus, string> = {
-  pending: '#3a3f4b',
-  running: '#d29922',
-  waiting: '#f2994a',
-  done: '#3fb950',
-  failed: '#f85149',
-  skipped: '#3a3f4b'
+  pending: 'var(--seg-off)',
+  running: 'var(--running)',
+  waiting: 'var(--attn)',
+  done: 'var(--done)',
+  failed: 'var(--failed)',
+  skipped: 'var(--seg-off)'
 }
 
 export const runLabel: Record<RunStatus, string> = {

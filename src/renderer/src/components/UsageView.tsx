@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import TicketStatsSection from './TicketStatsSection'
+import { TicketChartCard, TicketTiles, useTicketStats } from './TicketStatsSection'
+import { Icon } from './Icons'
 import type { PlanLimits, TokenCounts, UsageDay, UsageReport, UsageSlice } from '../../../shared/types'
 
 type Metric = 'all' | 'work' | 'output' | 'cacheRead' | 'messages'
@@ -88,108 +89,139 @@ export default function UsageView(): JSX.Element {
   const w = report?.window
   const ns = report ? total(report.nightShift) : 0
   const periodTotal = report ? total(report.period) : 0
+  const tickets = useTicketStats(days, report?.generatedAt ?? 0)
+  const peak = report?.daily.reduce<UsageDay | null>((best, d) => (!best || value(d, metric) > value(best, metric) ? d : best), null)
 
   return (
-    <div className="page usage">
-      <div className="header">
-        <h1>Claude Code usage</h1>
-        <span className="note">From Claude Code&apos;s session logs on this machine. Includes your own sessions and Night Shift&apos;s runs.</span>
-        <div className="right">
-          <div className="seg" role="group" aria-label="Range">
-            {RANGES.map((r) => (
-              <button key={r} type="button" className={days === r ? 'on' : ''} aria-pressed={days === r} onClick={() => setDays(r)}>
-                {r} days
-              </button>
-            ))}
-          </div>
-          <button className="btn small" type="button" onClick={() => void load(true)} disabled={loading}>
-            {loading ? 'Reading…' : 'Refresh'}
-          </button>
+    <div className="usage-page">
+      <header className="u-head">
+        <div className="u-head-title">
+          <h1>Claude Code usage</h1>
+          <span className="note">From Claude Code&apos;s session logs on this machine. Includes your own sessions and Night Shift&apos;s runs.</span>
+        </div>
+        <div className="u-seg" role="group" aria-label="Date range">
+          {RANGES.map((r) => (
+            <button key={r} type="button" aria-pressed={days === r} onClick={() => setDays(r)}>
+              {r} days
+            </button>
+          ))}
+        </div>
+        <button className={`btn${loading ? ' spinning-icon' : ''}`} type="button" onClick={() => void load(true)} disabled={loading}>
+          <Icon name="refresh" size={14} />
+          {loading ? 'Reading…' : 'Refresh'}
+        </button>
+      </header>
+
+      <div className="u-scroll">
+        <div className="u-body">
+          {error && <div className="empty">{error}</div>}
+          {!report && !error && (
+            <div className="empty">
+              {progress ? `Reading session logs… ${progress.done} of ${progress.total} files. The first time takes a while; after that only new lines are read.` : 'Reading session logs…'}
+            </div>
+          )}
+
+          {report && (
+            <>
+              <div className="u-row">
+                <PlanCard
+                  limits={limits}
+                  now={report.generatedAt}
+                  checking={checking}
+                  error={checkError}
+                  onCheck={api.checkLimits ? () => void checkNow() : undefined}
+                  window={w ? { total: total(w), messages: w.messages, perMinute: w.perMinute, start: w.start, end: w.end } : null}
+                />
+                <Tile label="Today" t={report.today} />
+                <Tile label="Last 7 days" t={report.week} />
+                <section className="u-card u-tile u-grow">
+                  <h2 className="u-tile-label">Night Shift runs · {days} days</h2>
+                  <span className="u-tile-value big">{fmt(ns)}</span>
+                  <span className="u-tile-sub">
+                    {periodTotal ? `${Math.round((ns / periodTotal) * 100)}% of all tokens` : 'No usage yet'} · {report.nightShift.messages} messages
+                  </span>
+                  {periodTotal > 0 && (
+                    <div className="u-share">
+                      <div className="u-share-bar" role="img" aria-label={`Night Shift ${Math.round((ns / periodTotal) * 100)}% of all tokens`}>
+                        <span style={{ width: `${(ns / periodTotal) * 100}%`, background: 'var(--cat-2)' }} />
+                        <span style={{ flex: 1, background: 'var(--cat-1)' }} />
+                      </div>
+                      <div className="u-legend">
+                        <span>
+                          <i style={{ background: 'var(--cat-2)' }} />
+                          Night Shift
+                        </span>
+                        <span>
+                          <i style={{ background: 'var(--cat-1)' }} />
+                          Your sessions
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              </div>
+
+              <section className="u-section" aria-labelledby="u-tickets">
+                <h2 id="u-tickets" className="sec-label">
+                  Tickets
+                </h2>
+                <TicketTiles stats={tickets.stats} supported={tickets.supported} days={days} />
+              </section>
+
+              <div className="u-row">
+                {tickets.supported && <TicketChartCard stats={tickets.stats} days={days} />}
+                <section className="u-card u-chart" aria-labelledby="u-bchart">
+                  <div className="u-chart-head">
+                    <div className="u-chart-title">
+                      <h2 id="u-bchart">{metric === 'messages' ? 'Messages' : 'Tokens used'}</h2>
+                      <span className="note">
+                        {fmt(value(report.period, metric))} in the last {days} days
+                        {peak && value(peak, metric) > 0 ? ` · peak ${dayLabel(peak.date, { month: 'short', day: 'numeric' })}, ${fmt(value(peak, metric))}` : ''}
+                      </span>
+                    </div>
+                    <select className="u-select" value={metric} onChange={(e) => setMetric(e.target.value as Metric)} aria-label="Measure" title={METRICS.find((m) => m.id === metric)?.hint}>
+                      {METRICS.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="u-check">
+                      <input type="checkbox" checked={asTable} onChange={(e) => setAsTable(e.target.checked)} />
+                      Show as table
+                    </label>
+                  </div>
+                  {asTable ? <DayTable days={report.daily} /> : <DayChart days={report.daily} metric={metric} />}
+                </section>
+              </div>
+
+              <div className="u-row">
+                <ModelCard title="By model" days={days} rows={report.byModel} />
+                <FolderCard title="By folder" days={days} rows={report.byProject} />
+              </div>
+
+              <p className="note usage-foot">
+                Read from {report.files} session files in {report.sources.join(', ') || 'no Claude folder found'}. Token counts are what Claude reported for each reply on this machine. Plan limits come from Claude itself, so they match /usage and include every device you use. Updated {clock(report.generatedAt)}.
+              </p>
+            </>
+          )}
         </div>
       </div>
-
-      {error && <div className="empty">{error}</div>}
-      {!report && !error && (
-        <div className="empty">
-          {progress ? `Reading session logs… ${progress.done} of ${progress.total} files. The first time takes a while; after that only new lines are read.` : 'Reading session logs…'}
-        </div>
-      )}
-
-      {report && (
-        <>
-          <div className="tiles">
-            <PlanTile limits={limits} now={report.generatedAt} checking={checking} error={checkError} onCheck={api.checkLimits ? () => void checkNow() : undefined} />
-            <div className="tile">
-              <div className="tile-label">Tokens this 5-hour window</div>
-              {w ? (
-                <>
-                  <div className="tile-value">{fmt(total(w))}</div>
-                  <div className="tile-sub">
-                    {w.messages} messages since {clock(w.start)} · about {fmt(w.perMinute)} a minute
-                  </div>
-                  <WindowBar start={w.start} end={w.end} now={report.generatedAt} />
-                  <div className="tile-sub">This machine only. Window ends about {clock(w.end)}.</div>
-                </>
-              ) : (
-                <>
-                  <div className="tile-value">0</div>
-                  <div className="tile-sub">No Claude Code activity on this machine in the last 5 hours.</div>
-                </>
-              )}
-            </div>
-            <Tile label="Today" t={report.today} />
-            <Tile label="Last 7 days" t={report.week} />
-            <div className="tile">
-              <div className="tile-label">Night Shift runs · {days} days</div>
-              <div className="tile-value">{fmt(ns)}</div>
-              <div className="tile-sub">
-                {periodTotal ? `${Math.round((ns / periodTotal) * 100)}% of all tokens` : 'No usage yet'} · {report.nightShift.messages} messages
-              </div>
-            </div>
-          </div>
-
-          <h2 className="usage-section">Tickets</h2>
-          <TicketStatsSection days={days} tick={report.generatedAt} />
-
-          <h2 className="usage-section">Tokens</h2>
-          <section className="usage-card">
-            <div className="usage-card-head">
-              <h2>Usage over time</h2>
-              <select value={metric} onChange={(e) => setMetric(e.target.value as Metric)} aria-label="Measure" title={METRICS.find((m) => m.id === metric)?.hint}>
-                {METRICS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-              <span className="note">{fmt(value(report.period, metric))} in the last {days} days</span>
-              <label className="toggle right">
-                <input type="checkbox" checked={asTable} onChange={(e) => setAsTable(e.target.checked)} />
-                Show as table
-              </label>
-            </div>
-            {asTable ? <DayTable days={report.daily} /> : <DayChart days={report.daily} metric={metric} />}
-          </section>
-
-          <div className="usage-split">
-            <SliceTable title={`By model · ${days} days`} rows={report.byModel} />
-            <SliceTable title={`By folder · ${days} days`} rows={report.byProject} />
-          </div>
-
-          <p className="note usage-foot">
-            Read from {report.files} session files in {report.sources.join(', ') || 'no Claude folder found'}. Token counts are what Claude reported for each reply on this machine. Plan limits come from Claude itself, so they match /usage and include every device you use. Updated {clock(report.generatedAt)}.
-          </p>
-        </>
-      )}
     </div>
   )
 }
 
 const WINDOW_NAMES: Record<string, string> = {
-  five_hour: 'Current session (5-hour)',
+  five_hour: 'Current session',
   seven_day: 'Weekly, all models',
   seven_day_opus: 'Weekly, Opus',
   seven_day_sonnet: 'Weekly, Sonnet'
+}
+const WINDOW_SUBS: Record<string, string> = {
+  five_hour: '5-hour limit',
+  seven_day: '7-day limit',
+  seven_day_opus: '7-day limit',
+  seven_day_sonnet: '7-day limit'
 }
 const windowName = (k: string): string => WINDOW_NAMES[k] ?? k.replace(/_/g, ' ')
 function resetLabel(t: number, now: number): string {
@@ -197,68 +229,114 @@ function resetLabel(t: number, now: number): string {
   return sameDay ? clock(t) : new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })
 }
 
-function PlanTile({ limits, now, checking, error, onCheck }: { limits: PlanLimits | null; now: number; checking: boolean; error: string | null; onCheck?: () => void }): JSX.Element {
+// A ring showing how much of a plan limit is used: amber from 75%, red from 90%.
+function Ring({ pct, label }: { pct: number; label: string }): JSX.Element {
+  const r = 34
+  const c = 2 * Math.PI * r
+  const tone = pct >= 90 ? 'bad' : pct >= 75 ? 'warn' : ''
+  return (
+    <svg className={`u-ring ${tone}`} width="84" height="84" viewBox="0 0 84 84" role="img" aria-label={`${label}, ${pct}% used`}>
+      <circle cx="42" cy="42" r={r} className="track" />
+      {pct > 0 && <circle cx="42" cy="42" r={r} className="arc" strokeDasharray={`${(c * Math.min(100, pct)) / 100} ${c}`} transform="rotate(-90 42 42)" />}
+      <text x="42" y="47" textAnchor="middle">
+        {pct}%
+      </text>
+    </svg>
+  )
+}
+
+function PlanCard({
+  limits,
+  now,
+  checking,
+  error,
+  onCheck,
+  window: win5
+}: {
+  limits: PlanLimits | null
+  now: number
+  checking: boolean
+  error: string | null
+  onCheck?: () => void
+  window: { total: number; messages: number; perMinute: number; start: number; end: number } | null
+}): JSX.Element {
   const order = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet']
   const keys = limits ? Object.keys(limits.windows).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99)) : []
+  const elapsed = win5 ? Math.min(100, Math.max(0, ((now - win5.start) / (win5.end - win5.start)) * 100)) : 0
   return (
-    <div className="tile hero plan">
-      <div className="tile-label">
-        Plan limits
+    <section className="u-card u-plan" aria-labelledby="u-limits">
+      <div className="u-plan-head">
+        <h2 id="u-limits">Plan limits</h2>
+        {limits && (
+          <span className="note">
+            As of {clock(limits.seenAt)}
+            {new Date(limits.seenAt).toDateString() !== new Date(now).toDateString() ? ` on ${new Date(limits.seenAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}` : ''},{' '}
+            {limits.source === 'check' ? 'from Check now' : 'from a Night Shift run'}
+          </span>
+        )}
         {onCheck && (
           <button className="btn small" type="button" onClick={onCheck} disabled={checking} title="Sends Claude one very short Haiku message to get fresh numbers">
             {checking ? 'Checking…' : 'Check now'}
           </button>
         )}
       </div>
-      {!limits && <div className="tile-sub">No numbers yet. They arrive with the next Night Shift run, or press Check now.</div>}
-      {keys.map((k) => {
-        const win = limits!.windows[k]
-        const reset = win.resetsAt !== undefined && win.resetsAt <= now
-        const pct = reset ? 0 : Math.round(win.utilization * 100)
-        return (
-          <div key={k} className="plan-row">
-            <div className="plan-row-head">
-              <span>{windowName(k)}</span>
-              <b>{reset ? '0%' : `${pct}%`} used</b>
+      {error && <div className="note warn">{error}</div>}
+      <div className="u-plan-body">
+        {!limits && <p className="note u-limit">No numbers yet. They arrive with the next Night Shift run, or press Check now.</p>}
+        {keys.map((k) => {
+          const lim = limits!.windows[k]
+          const reset = lim.resetsAt !== undefined && lim.resetsAt <= now
+          const pct = reset ? 0 : Math.round(lim.utilization * 100)
+          return (
+            <div key={k} className="u-limit">
+              <Ring pct={pct} label={windowName(k)} />
+              <div className="u-limit-text">
+                <span className="u-limit-name">{windowName(k)}</span>
+                {WINDOW_SUBS[k] && <span className="u-limit-sub">{WINDOW_SUBS[k]}</span>}
+                <span className="note">
+                  {reset ? `Reset at ${resetLabel(lim.resetsAt!, now)} since the last report` : lim.resetsAt ? `Resets ${resetLabel(lim.resetsAt, now)}` : ''}
+                </span>
+              </div>
             </div>
-            <div className={`winbar${pct >= 90 ? ' bad' : pct >= 75 ? ' warn' : ''}`}>
-              <div style={{ width: `${pct}%` }} />
-            </div>
-            <div className="tile-sub">
-              {reset ? `Reset at ${resetLabel(win.resetsAt!, now)} since the last report` : win.resetsAt ? `Resets ${resetLabel(win.resetsAt, now)}` : ''}
-            </div>
-          </div>
-        )
-      })}
-      {limits && (
-        <div className="tile-sub">
-          As of {clock(limits.seenAt)}
-          {new Date(limits.seenAt).toDateString() !== new Date(now).toDateString() ? ` on ${new Date(limits.seenAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}` : ''}, {limits.source === 'check' ? 'from Check now' : 'from a Night Shift run'}
+          )
+        })}
+        <div className="u-window">
+          <span className="note">Tokens this 5-hour window</span>
+          {win5 ? (
+            <>
+              <span className="u-tile-value">{fmt(win5.total)}</span>
+              <span className="u-tile-sub">
+                {win5.messages} messages since {clock(win5.start)} · about {fmt(win5.perMinute)} a minute
+              </span>
+              <div className="u-window-bar" role="img" aria-label={`${Math.round(elapsed)}% of the window has passed`}>
+                <div style={{ width: `${elapsed}%` }} />
+              </div>
+              <div className="u-window-ends">
+                <span>{clock(win5.start)}</span>
+                <span>Window ends about {clock(win5.end)} · this machine only</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <span className="u-tile-value">0</span>
+              <span className="u-tile-sub">No Claude Code activity on this machine in the last 5 hours.</span>
+            </>
+          )}
         </div>
-      )}
-      {error && <div className="tile-sub err">{error}</div>}
-    </div>
+      </div>
+    </section>
   )
 }
 
 function Tile({ label, t }: { label: string; t: TokenCounts }): JSX.Element {
   return (
-    <div className="tile">
-      <div className="tile-label">{label}</div>
-      <div className="tile-value">{fmt(total(t))}</div>
-      <div className="tile-sub">
-        {fmt(t.input + t.output)} in + out · {fmt(t.cacheRead + t.cacheWrite)} cache · {t.messages} messages
-      </div>
-    </div>
-  )
-}
-
-function WindowBar({ start, end, now }: { start: number; end: number; now: number }): JSX.Element {
-  const pct = Math.min(100, Math.max(0, ((now - start) / (end - start)) * 100))
-  return (
-    <div className="winbar" role="img" aria-label={`${Math.round(pct)}% of the window has passed`}>
-      <div style={{ width: `${pct}%` }} />
-    </div>
+    <section className="u-card u-tile u-grow">
+      <h2 className="u-tile-label">{label}</h2>
+      <span className="u-tile-value big">{fmt(total(t))}</span>
+      <span className="u-tile-sub">
+        {fmt(t.input + t.output)} in + out · {fmt(t.cacheRead + t.cacheWrite)} cache · {t.messages.toLocaleString()} messages
+      </span>
+    </section>
   )
 }
 
@@ -290,7 +368,7 @@ function DayChart({ days, metric }: { days: UsageDay[]; metric: Metric }): JSX.E
 
   return (
     <div className="daychart" ref={wrapRef} onMouseLeave={() => setHover(null)}>
-      <svg width={width} height={H} role="img" aria-label={`Daily ${METRICS.find((m) => m.id === metric)?.label}, ${days.length} days`}>
+      <svg className={hover !== null ? 'hovering' : undefined} width={width} height={H} role="img" aria-label={`Daily ${METRICS.find((m) => m.id === metric)?.label}, ${days.length} days`}>
         {ticks.map((t) => (
           <g key={t}>
             <line x1={pad.l} x2={pad.l + plotW} y1={y(t)} y2={y(t)} className="grid" />
@@ -396,32 +474,96 @@ function DayTable({ days }: { days: UsageDay[] }): JSX.Element {
   )
 }
 
-function SliceTable({ title, rows }: { title: string; rows: UsageSlice[] }): JSX.Element {
-  const max = Math.max(1, ...rows.map(total))
+const share = (n: number, all: number): string => {
+  if (!all || !n) return '0%'
+  const p = (n / all) * 100
+  return p < 0.1 ? '<0.1%' : p < 10 ? `${p.toFixed(1).replace(/\.0$/, '')}%` : `${Math.round(p)}%`
+}
+const catColor = (i: number): string => `var(--cat-${(i % 6) + 1})`
+
+// Models: a stacked share bar (with the table below as its legend), then share, total and output.
+function ModelCard({ title, days, rows }: { title: string; days: number; rows: UsageSlice[] }): JSX.Element {
+  const all = rows.reduce((sum, r) => sum + total(r), 0)
   return (
-    <section className="usage-card">
-      <div className="usage-card-head">
+    <section className="u-card u-slices" aria-label={`${title}, ${days} days`}>
+      <div className="u-slices-head">
         <h2>{title}</h2>
+        <span className="note">{days} days</span>
       </div>
       {!rows.length && <div className="note">Nothing in this range.</div>}
-      <table className="usage-table slices">
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.name}>
-              <td className="name" title={r.name}>
-                {r.name}
-              </td>
-              <td className="meter-cell">
-                <div className="meter">
-                  <div style={{ width: `${(total(r) / max) * 100}%` }} />
-                </div>
-              </td>
-              <td title={`${fmt(r.input)} in · ${fmt(r.output)} out · ${fmt(r.cacheWrite)} cache write · ${fmt(r.cacheRead)} cache read`}>{fmt(total(r))}</td>
-              <td className="muted">{fmt(r.output)} out</td>
-            </tr>
+      {all > 0 && (
+        <div className="u-stack" role="img" aria-label={rows.map((r) => `${r.name} ${share(total(r), all)}`).join(', ')}>
+          {rows.map((r, i) => (
+            <span key={r.name} style={{ width: `${(total(r) / all) * 100}%`, background: catColor(i) }} />
           ))}
-        </tbody>
-      </table>
+        </div>
+      )}
+      {rows.length > 0 && (
+        <table className="u-table">
+          <thead>
+            <tr>
+              <th scope="col">Model</th>
+              <th scope="col">Share</th>
+              <th scope="col">Total</th>
+              <th scope="col">Out</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={r.name}>
+                <td className="name" title={r.name}>
+                  <i style={{ background: catColor(i) }} aria-hidden="true" />
+                  {r.name}
+                </td>
+                <td className="muted">{share(total(r), all)}</td>
+                <td className="strong" title={`${fmt(r.input)} in · ${fmt(r.output)} out · ${fmt(r.cacheWrite)} cache write · ${fmt(r.cacheRead)} cache read`}>
+                  {fmt(total(r))}
+                </td>
+                <td className="muted">{fmt(r.output)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  )
+}
+
+const FOLDERS_SHOWN = 6
+
+// Folders: log-scale bars, so small folders still show next to one big one.
+function FolderCard({ title, days, rows }: { title: string; days: number; rows: UsageSlice[] }): JSX.Element {
+  const [all, setAll] = useState(false)
+  const lmax = Math.log10(Math.max(10, ...rows.map(total)))
+  const shown = all ? rows : rows.slice(0, FOLDERS_SHOWN)
+  return (
+    <section className="u-card u-slices" aria-label={`${title}, ${days} days`}>
+      <div className="u-slices-head">
+        <h2>{title}</h2>
+        <span className="note">{days} days · log scale bars</span>
+      </div>
+      {!rows.length && <div className="note">Nothing in this range.</div>}
+      <div className="u-folders">
+        {shown.map((r) => (
+          <div key={r.name} className="u-folder">
+            <span className="name" title={r.name}>
+              {r.name}
+            </span>
+            <span className="u-meter" aria-hidden="true">
+              <span style={{ width: `${Math.max(4, (Math.log10(Math.max(1, total(r))) / lmax) * 100)}%` }} />
+            </span>
+            <span className="strong" title={`${fmt(r.input)} in · ${fmt(r.output)} out · ${fmt(r.cacheWrite)} cache write · ${fmt(r.cacheRead)} cache read`}>
+              {fmt(total(r))}
+            </span>
+            <span className="muted">{fmt(r.output)} out</span>
+          </div>
+        ))}
+      </div>
+      {rows.length > FOLDERS_SHOWN && (
+        <button className="btn small u-more" type="button" aria-expanded={all} onClick={() => setAll((x) => !x)}>
+          {all ? 'Show fewer folders' : `Show all ${rows.length} folders`}
+        </button>
+      )}
     </section>
   )
 }

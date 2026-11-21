@@ -40,6 +40,7 @@ const api: NightShiftApi = {
   installUpdate: () => ipcRenderer.invoke('update:install'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   getIssueDetail: (issueId: string) => ipcRenderer.invoke('issue:detail', issueId),
+  syncIssue: (issueId: string) => ipcRenderer.invoke('issue:sync', issueId),
   getIssueRelations: (issueId: string) => ipcRenderer.invoke('issue:relations', issueId),
   getPrStatuses: (urls: string[], refresh?: boolean) => ipcRenderer.invoke('github:prs', urls, refresh),
   mergePr: (url: string) => ipcRenderer.invoke('github:merge', url),

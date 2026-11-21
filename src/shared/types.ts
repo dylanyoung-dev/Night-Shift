@@ -583,6 +583,7 @@ export interface NightShiftApi {
   onUpdateState?(cb: (s: UpdateState) => void): () => void
   installUpdate?(): Promise<void> // restart now and install the downloaded update
   getIssueDetail?(issueId: string): Promise<IssueDetail | { error: string }>
+  syncIssue?(issueId: string): Promise<{ ok: true } | { error: string }> // re-read one ticket from Linear onto the board
   getIssueRelations?(issueId: string): Promise<IssueRelation[] | { error: string }>
   getPrStatuses?(urls: string[], refresh?: boolean): Promise<{ statuses: Record<string, PrStatus>; error?: string }>
   mergePr?(url: string): Promise<{ ok: true } | { error: string }> // merge with the repo's method and delete the remote branch

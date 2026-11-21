@@ -35,14 +35,11 @@ interface Point extends TicketBucket {
   long: string
 }
 
-// Tickets completed in Linear, and what Night Shift's agents spent on them. Lives on the usage page.
-export default function TicketStatsSection({ days, tick }: { days: number; tick: number }): JSX.Element | null {
+// Tickets completed in Linear, and what Night Shift's agents spent on them. Loaded once for the usage
+// page, which shows the tiles and the chart in different places.
+export function useTicketStats(days: number, tick: number): { stats: TicketStats | null; supported: boolean } {
   const api = window.nightShift
   const [stats, setStats] = useState<TicketStats | null>(null)
-  const [by, setBy] = useState<'day' | 'week'>('day')
-  const [m, setM] = useState<Measure>('count')
-  const [asTable, setAsTable] = useState(false)
-
   useEffect(() => {
     if (!api.getTicketStats) return
     let live = true
@@ -54,89 +51,108 @@ export default function TicketStatsSection({ days, tick }: { days: number; tick:
       live = false
     }
   }, [days, tick])
+  return { stats, supported: Boolean(api.getTicketStats) }
+}
 
-  if (!api.getTicketStats) return <div className="empty">Restart Night Shift to see completed tickets.</div>
+export function TicketTiles({ stats, supported, days }: { stats: TicketStats | null; supported: boolean; days: number }): JSX.Element {
+  if (!supported) return <div className="empty">Restart Night Shift to see completed tickets.</div>
   if (!stats) return <div className="note">Loading completed tickets…</div>
-
   const weekDiff = stats.thisWeek - stats.lastWeek
+  const rangeCount = stats.tickets.length
+  return (
+    <>
+      {stats.error && <div className="banner inline">{stats.error}</div>}
+      <div className="u-tiles">
+        <section className="u-card u-tile">
+          <h3 className="u-tile-label">Done today</h3>
+          <span className="u-tile-value">{stats.today}</span>
+          <span className="u-tile-sub">Since midnight, moved to a Done state in Linear</span>
+        </section>
+        <section className="u-card u-tile">
+          <h3 className="u-tile-label">Done this week</h3>
+          <span className="u-tile-row">
+            <span className="u-tile-value">{stats.thisWeek}</span>
+            {(stats.lastWeek > 0 || stats.thisWeek > 0) && (
+              <span className="u-delta">
+                {weekDiff >= 0 ? '+' : '−'}
+                {Math.abs(weekDiff)} vs last week so far
+              </span>
+            )}
+          </span>
+          <span className="u-tile-sub">Since Monday · last week {stats.lastWeek}</span>
+        </section>
+        <section className="u-card u-tile">
+          <h3 className="u-tile-label">Tokens per ticket</h3>
+          <span className="u-tile-value">{stats.withAgents ? fmt(stats.avgTokens) : '–'}</span>
+          <span className="u-tile-sub">
+            {stats.withAgents
+              ? `${fmt(stats.avgOutput)} written by Claude${stats.tokensPerPoint !== null ? ` · ${fmt(stats.tokensPerPoint)} per point` : ''}`
+              : 'No completed tickets with Night Shift runs yet'}
+          </span>
+        </section>
+        <section className="u-card u-tile">
+          <h3 className="u-tile-label">Agents per ticket</h3>
+          <span className="u-tile-value">{stats.withAgents ? one(stats.avgRuns) : '–'}</span>
+          <span className="u-tile-sub">
+            {stats.withAgents ? `Runs on average · ${one(stats.avgSessions)} Claude sessions · ${duration(stats.avgAgentMs)} of agent time` : 'Runs and Claude sessions on each ticket'}
+          </span>
+        </section>
+        <section className="u-card u-tile">
+          <h3 className="u-tile-label">Done with agents · {days} days</h3>
+          <span className="u-tile-value">{rangeCount ? `${Math.round((stats.withAgents / rangeCount) * 100)}%` : '–'}</span>
+          <span className="u-tile-sub">
+            {stats.withAgents} of {rangeCount} completed tickets had a Night Shift run
+          </span>
+        </section>
+      </div>
+    </>
+  )
+}
+
+export function TicketChartCard({ stats, days }: { stats: TicketStats | null; days: number }): JSX.Element | null {
+  const [by, setBy] = useState<'day' | 'week'>('day')
+  const [m, setM] = useState<Measure>('count')
+  const [asTable, setAsTable] = useState(false)
+  if (!stats) return null
   const points: Point[] =
     by === 'day'
       ? stats.daily.map((d) => ({ ...d, key: d.date, label: dayLabel(d.date, { month: 'short', day: 'numeric' }), long: dayLabel(d.date, { weekday: 'short', month: 'short', day: 'numeric' }) }))
       : stats.weekly.map((w) => ({ ...w, key: w.start, label: dayLabel(w.start, { month: 'short', day: 'numeric' }), long: `Week of ${dayLabel(w.start, { month: 'short', day: 'numeric' })}` }))
   const rangeCount = stats.tickets.length
+  const label = MEASURES.find((x) => x.id === m)?.label ?? ''
 
   return (
-    <>
-      {stats.error && <div className="empty">{stats.error}</div>}
-      <div className="tiles">
-        <div className="tile">
-          <div className="tile-label">Tickets done today</div>
-          <div className="tile-value">{stats.today}</div>
-          <div className="tile-sub">Since midnight, moved to a Done state in Linear</div>
-        </div>
-        <div className="tile">
-          <div className="tile-label">Tickets done this week</div>
-          <div className="tile-value">{stats.thisWeek}</div>
-          <div className="tile-sub">
-            Since Monday · last week {stats.lastWeek}
-            {stats.lastWeek || stats.thisWeek ? ` (${weekDiff >= 0 ? '+' : ''}${weekDiff} so far)` : ''}
-          </div>
-        </div>
-        <div className="tile">
-          <div className="tile-label">Tokens per ticket</div>
-          <div className="tile-value">{stats.withAgents ? fmt(stats.avgTokens) : '–'}</div>
-          <div className="tile-sub">
-            {stats.withAgents
-              ? `${fmt(stats.avgOutput)} written by Claude${stats.tokensPerPoint !== null ? ` · ${fmt(stats.tokensPerPoint)} per point` : ''}`
-              : 'No completed tickets with Night Shift runs yet'}
-          </div>
-        </div>
-        <div className="tile">
-          <div className="tile-label">Agents per ticket</div>
-          <div className="tile-value">{stats.withAgents ? one(stats.avgRuns) : '–'}</div>
-          <div className="tile-sub">
-            {stats.withAgents ? `runs on average · ${one(stats.avgSessions)} Claude sessions · ${duration(stats.avgAgentMs)} of agent time` : 'Runs and Claude sessions on each ticket'}
-          </div>
-        </div>
-        <div className="tile">
-          <div className="tile-label">Done with agents · {days} days</div>
-          <div className="tile-value">{rangeCount ? `${Math.round((stats.withAgents / rangeCount) * 100)}%` : '–'}</div>
-          <div className="tile-sub">
-            {stats.withAgents} of {rangeCount} completed tickets had a Night Shift run
-          </div>
-        </div>
-      </div>
-
-      <section className="usage-card">
-        <div className="usage-card-head">
-          <h2>Tickets over time</h2>
-          <select value={m} onChange={(e) => setM(e.target.value as Measure)} aria-label="Measure" title={MEASURES.find((x) => x.id === m)?.hint}>
-            {MEASURES.map((x) => (
-              <option key={x.id} value={x.id}>
-                {x.label}
-              </option>
-            ))}
-          </select>
-          <div className="seg" role="group" aria-label="Per">
-            <button type="button" className={by === 'day' ? 'on' : ''} aria-pressed={by === 'day'} onClick={() => setBy('day')}>
-              Per day
-            </button>
-            <button type="button" className={by === 'week' ? 'on' : ''} aria-pressed={by === 'week'} onClick={() => setBy('week')}>
-              Per week
-            </button>
-          </div>
+    <section className="u-card u-chart" aria-labelledby="u-tchart">
+      <div className="u-chart-head">
+        <div className="u-chart-title">
+          <h2 id="u-tchart">{label}</h2>
           <span className="note">
             {rangeCount} done in the last {days} days{by === 'week' ? ' · weeks start Monday' : ''}
             {isAverage(m) ? ' · averages over tickets with Night Shift runs' : ''}
           </span>
-          <label className="toggle right">
-            <input type="checkbox" checked={asTable} onChange={(e) => setAsTable(e.target.checked)} />
-            Show tickets
-          </label>
         </div>
-        {asTable ? <TicketTable stats={stats} /> : <LineChart points={points} m={m} />}
-      </section>
-    </>
+        <select className="u-select" value={m} onChange={(e) => setM(e.target.value as Measure)} aria-label="Measure" title={MEASURES.find((x) => x.id === m)?.hint}>
+          {MEASURES.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.label}
+            </option>
+          ))}
+        </select>
+        <div className="u-seg small" role="group" aria-label="Per">
+          <button type="button" aria-pressed={by === 'day'} onClick={() => setBy('day')}>
+            Per day
+          </button>
+          <button type="button" aria-pressed={by === 'week'} onClick={() => setBy('week')}>
+            Per week
+          </button>
+        </div>
+        <label className="u-check">
+          <input type="checkbox" checked={asTable} onChange={(e) => setAsTable(e.target.checked)} />
+          Show tickets
+        </label>
+      </div>
+      {asTable ? <TicketTable stats={stats} /> : <LineChart points={points} m={m} unit={by} />}
+    </section>
   )
 }
 
@@ -147,7 +163,7 @@ function niceMax(v: number): number {
 }
 
 // One 2px line with a dot per day or week. An average leaves a gap where no tickets had agent runs.
-function LineChart({ points, m }: { points: Point[]; m: Measure }): JSX.Element {
+function LineChart({ points, m, unit }: { points: Point[]; m: Measure; unit: 'day' | 'week' }): JSX.Element {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(800)
   const [hover, setHover] = useState<number | null>(null)
@@ -187,6 +203,9 @@ function LineChart({ points, m }: { points: Point[]; m: Measure }): JSX.Element 
   if (seg) segments.push(seg)
   const area = !isAverage(m) && segments[0] ? `${segments[0]}L${x(points.length - 1)},${y(0)} L${x(0)},${y(0)} Z` : null
 
+  // A dashed average line for counts (not for measures that are averages already).
+  const avg = !isAverage(m) && points.length ? vals.reduce<number>((sum, v) => sum + (v ?? 0), 0) / points.length : 0
+
   const h = hover !== null ? points[hover] : null
   const hv = hover !== null ? vals[hover] : null
   const label = MEASURES.find((o) => o.id === m)?.label ?? ''
@@ -202,7 +221,7 @@ function LineChart({ points, m }: { points: Point[]; m: Measure }): JSX.Element 
         setHover(Math.min(points.length - 1, Math.max(0, i)))
       }}
     >
-      <svg width={width} height={H} role="img" aria-label={`${label}, ${points.length} points`}>
+      <svg width={width} height={H} role="img" aria-label={`${label} per ${unit}, ${points.length} points${avg > 0 ? `, average ${one(avg)}` : ''}`}>
         {ticks.map((t) => (
           <g key={t}>
             <line x1={pad.l} x2={pad.l + plotW} y1={y(t)} y2={y(t)} className="grid" />
@@ -219,6 +238,14 @@ function LineChart({ points, m }: { points: Point[]; m: Measure }): JSX.Element 
           ) : null
         )}
         {area && <path d={area} className="line-area" />}
+        {avg > 0 && (
+          <g>
+            <line x1={pad.l} x2={pad.l + plotW} y1={y(avg)} y2={y(avg)} className="avg-line" />
+            <text x={pad.l + plotW} y={y(avg) - 6} textAnchor="end" className="axis avg-label">
+              Avg {one(avg)} a {unit}
+            </text>
+          </g>
+        )}
         {segments.map((d) => (
           <path key={d} d={d} className="line" />
         ))}

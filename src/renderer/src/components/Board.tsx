@@ -4,9 +4,9 @@ import { DEFAULT_FAILURE_LABEL, isActiveRun, type BoardData, type IssueRelation,
 import IssueMenu, { type MenuMode } from './IssueMenu'
 import { duration, runColor, runLabel } from '../util'
 import PrChip from './PrChip'
+import { Icon } from './Icons'
 import {
   Avatar,
-  BlockedIcon,
   EstimateIcon,
   PreviewIcon,
   PRIORITY_LABEL,
@@ -30,6 +30,7 @@ interface Props {
   setsFor(stateName: string): StepChoice[] // the sets of steps (buttons) for a state
   onGlimpse(issueId: string, tab?: 'ticket' | 'spec'): void // show the ticket's details (or its spec) in a side panel
   groupBy?: string | null // label group id (Initiative, Area…): one swimlane per label in it
+  wide?: boolean // columns share the width; otherwise fixed columns that scroll sideways
 }
 
 const DRAG_TYPE = 'application/x-nightshift-issue'
@@ -60,6 +61,12 @@ function ago(t: number): string {
   if (m < 60) return `${m}m ago`
   const h = Math.round(m / 60)
   return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`
+}
+
+function shortDate(iso: string): string {
+  const d = new Date(iso)
+  const sameYear = d.getFullYear() === new Date().getFullYear()
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) })
 }
 
 function createdLabel(iso: string): string {
@@ -102,8 +109,7 @@ export function clearRelationsCache(): void {
   relationsCache.clear()
 }
 
-function Relations({ issueId, count }: { issueId: string; count: number }): JSX.Element {
-  const [shown, setShown] = useState(false)
+function RelationsList({ issueId, count }: { issueId: string; count: number }): JSX.Element {
   const [items, setItems] = useState<IssueRelation[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -127,58 +133,63 @@ function Relations({ issueId, count }: { issueId: string; count: number }): JSX.
     setItems(sorted)
   }
 
-  // A board refresh changed the count while the section is open: reload it.
+  // Loads on opening; a board refresh that changes the count while open reloads it.
   useEffect(() => {
-    if (shown) void load()
+    void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [count])
 
-  const toggle = (e: React.MouseEvent): void => {
-    e.stopPropagation()
-    const next = !shown
-    setShown(next)
-    if (next) void load()
-  }
-
   return (
     <div className="relations" onClick={(e) => e.stopPropagation()}>
-      <button type="button" className="relations-toggle" aria-expanded={shown} onClick={toggle}>
-        <span className="chev" aria-hidden="true">
-          {shown ? '▾' : '▸'}
-        </span>
-        Relations <span className="n">{count}</span>
-      </button>
-      {shown &&
-        (error ? (
-          <p className="relations-note bad">{error}</p>
-        ) : !items ? (
-          <p className="relations-note">Loading…</p>
-        ) : items.length === 0 ? (
-          <p className="relations-note">No linked tickets.</p>
-        ) : (
-          <ul className="run-stack relations-list">
-            {items.map((r, i) => {
-              const done = r.issue.state.type === 'completed' || r.issue.state.type === 'canceled'
-              return (
-                <li key={`${r.kind}${r.issue.id}${i}`}>
-                  <button
-                    type="button"
-                    className={`run-row${done ? ' done' : ''}`}
-                    title={`${RELATION_LABEL[r.kind]}: ${r.issue.identifier} ${r.issue.title} (${r.issue.state.name}) · open in Linear`}
-                    onClick={() => open(r.issue.url)}
-                  >
-                    <span className="kind">{RELATION_LABEL[r.kind]}</span>
-                    <span className="dot" style={{ background: r.issue.state.color }} aria-hidden="true" />
-                    <span className="rid">{r.issue.identifier}</span>
-                    <span className="what">{r.issue.title}</span>
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-        ))}
+      {error ? (
+        <p className="relations-note bad">{error}</p>
+      ) : !items ? (
+        <p className="relations-note">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="relations-note">No linked tickets.</p>
+      ) : (
+        <ul className="run-stack relations-list" aria-label="Linked tickets">
+          {items.map((r, i) => {
+            const done = r.issue.state.type === 'completed' || r.issue.state.type === 'canceled'
+            return (
+              <li key={`${r.kind}${r.issue.id}${i}`}>
+                <button
+                  type="button"
+                  className={`run-row${done ? ' done' : ''}`}
+                  title={`${RELATION_LABEL[r.kind]}: ${r.issue.identifier} ${r.issue.title} (${r.issue.state.name}) · open in Linear`}
+                  onClick={() => open(r.issue.url)}
+                >
+                  <span className="kind">{RELATION_LABEL[r.kind]}</span>
+                  <span className="dot" style={{ background: r.issue.state.color }} aria-hidden="true" />
+                  <span className="rid">{r.issue.identifier}</span>
+                  <span className="what">{r.issue.title}</span>
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
     </div>
   )
+}
+
+// A Bug, Feature or Chore label (also "Type: Bug") shows as the coloured type chip first.
+const TYPE_RE = /^(?:type\s*[:/›>-]\s*)?(bug|feature|chore)$/i
+function typeOf(issue: LinearIssue): { label: LinearLabel; kind: string } | null {
+  for (const l of issue.labels) {
+    const m = TYPE_RE.exec(l.name.trim())
+    if (m) return { label: l, kind: m[1].toLowerCase() }
+  }
+  return null
+}
+
+const RUN_TONE: Record<Run['status'], string> = {
+  queued: 'queued',
+  running: 'running',
+  waiting: 'needs',
+  done: 'done',
+  failed: 'failed',
+  stopped: 'stopped'
 }
 
 function Card({
@@ -191,7 +202,6 @@ function Card({
   sets,
   canEstimate,
   onSelect,
-  onStart,
   onMenu,
   onOpenLog
 }: {
@@ -204,15 +214,19 @@ function Card({
   sets: StepChoice[]
   canEstimate: boolean
   onSelect(): void
-  onStart(setName: string): void
   onMenu(mode: MenuMode, at: { x: number; y: number }): void
   onOpenLog(runId: string): void
 }): JSX.Element {
+  const [relOpen, setRelOpen] = useState(false)
+  const [olderOpen, setOlderOpen] = useState(false)
   const active = run && isActiveRun(run.status)
   const waiting = run?.status === 'waiting'
   // Red: the last run failed, or Linear still has the failure label on it (e.g. from another install).
   const failed = run?.status === 'failed' || issue.labels.some((l) => l.name.toLowerCase() === DEFAULT_FAILURE_LABEL.toLowerCase())
   const step = run && run.currentStep >= 0 ? run.steps[run.currentStep] : undefined
+  const type = typeOf(issue)
+  const tags = issue.labels.filter((l) => l.id !== type?.label.id)
+  const relations = issue.relationCount ?? 0
   const stop = (fn: () => void) => (e: React.MouseEvent) => {
     e.stopPropagation()
     fn()
@@ -223,6 +237,20 @@ function Card({
     const r = e.currentTarget.getBoundingClientRect()
     onMenu(mode, { x: r.left, y: r.bottom + 4 })
   }
+  const actionsButton = (
+    <button
+      className="card-run"
+      type="button"
+      aria-haspopup="menu"
+      title={sets.length ? `Actions for ${issue.identifier}: ${sets.map((s) => s.label).join(', ')}` : `More for ${issue.identifier}`}
+      onClick={menu('run')}
+    >
+      Actions <span aria-hidden="true">▾</span>
+    </button>
+  )
+  const stepText = run && run.steps.length ? `Step ${Math.max(0, run.currentStep) + 1}/${run.steps.length}` : ''
+  const segColor = (s: Run['steps'][number]['status']): string =>
+    s === 'failed' ? 'var(--failed)' : s === 'pending' || s === 'skipped' ? 'var(--seg-off)' : runColor[run!.status]
 
   return (
     <article
@@ -242,10 +270,28 @@ function Card({
       onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), onSelect())}
     >
       <div className="card-top">
+        <button type="button" className="chip-btn status-btn" aria-label={`Status: ${state.name}. Change`} onClick={menu('status')}>
+          <StatusIcon state={state} progress={progress} />
+        </button>
         <span className="id">{issue.identifier}</span>
+        <button
+          type="button"
+          className={`chip-btn prio-btn p${issue.priority}`}
+          aria-label={`Priority: ${PRIORITY_LABEL[issue.priority] ?? 'No priority'}. Change`}
+          onClick={menu('priority')}
+        >
+          <PriorityIcon priority={issue.priority} />
+        </button>
         {issue.parent && (
           <span className="parent" title={`${issue.parent.identifier} ${issue.parent.title}`}>
             <span aria-hidden="true">›</span> {issue.parent.title}
+          </span>
+        )}
+        <span className="spacer" />
+        {issue.blocked && (
+          <span className="blocked-tag" title="Blocked by another ticket">
+            <Icon name="blocked" size={12} width={2.2} />
+            Blocked
           </span>
         )}
         <button
@@ -259,26 +305,24 @@ function Card({
       </div>
 
       <div className="card-title">
-        <button type="button" className="chip-btn status-btn" aria-label={`Status: ${state.name}. Change`} onClick={menu('status')}>
-          <StatusIcon state={state} progress={progress} />
-        </button>
         <span className="title">{issue.title}</span>
       </div>
 
       <div className="props">
-        <button
-          type="button"
-          className="prop icon"
-          aria-label={`Priority: ${PRIORITY_LABEL[issue.priority] ?? 'No priority'}. Change`}
-          onClick={menu('priority')}
-        >
-          <PriorityIcon priority={issue.priority} />
-        </button>
-        {issue.blocked && (
-          <span className="prop icon">
-            <BlockedIcon />
-          </span>
+        {type && (
+          <button type="button" className={`prop type-chip ${type.kind}`} aria-label={`Type: ${type.label.name}. Change labels`} onClick={menu('labels')}>
+            {type.label.name.replace(/^type\s*[:/›>-]\s*/i, '')}
+          </button>
         )}
+        {issue.milestone && (
+          <button type="button" className="prop milestone-chip" title={issue.milestone.name} aria-label={`Milestone: ${issue.milestone.name}. Change`} onClick={menu('milestone')}>
+            <Icon name="flag" size={11} width={2.4} />
+            {issue.milestone.name}
+          </button>
+        )}
+        {issue.pullRequests.map((pr) => (
+          <PrChip key={pr.url} pr={pr} onOpen={stop(() => open(pr.url))} />
+        ))}
         {issue.estimate != null && (
           <button
             type="button"
@@ -291,21 +335,6 @@ function Card({
             {issue.estimate}
           </button>
         )}
-        {issue.milestone && (
-          <button type="button" className="prop" aria-label={`Milestone: ${issue.milestone.name}. Change`} onClick={menu('milestone')}>
-            <MilestoneIcon />
-            {issue.milestone.name}
-          </button>
-        )}
-        {issue.labels.map((l) => (
-          <button key={l.id} type="button" className="prop" aria-label={`Label: ${l.name}. Change labels`} onClick={menu('labels')}>
-            <span className="dot" style={{ background: l.color }} aria-hidden="true" />
-            {l.name}
-          </button>
-        ))}
-        {issue.pullRequests.map((pr) => (
-          <PrChip key={pr.url} pr={pr} onOpen={stop(() => open(pr.url))} />
-        ))}
         {issue.previewUrl && (
           <button type="button" className="prop link" title="Open deploy preview" onClick={stop(() => open(issue.previewUrl!))}>
             <PreviewIcon />
@@ -318,30 +347,65 @@ function Card({
             {issue.subIssues.done}/{issue.subIssues.total}
           </span>
         )}
+        {tags.map((l) => (
+          <button key={l.id} type="button" className="prop" aria-label={`Label: ${l.name}. Change labels`} onClick={menu('labels')}>
+            <span className="dot" style={{ background: l.color }} aria-hidden="true" />
+            {l.name}
+          </button>
+        ))}
       </div>
 
       {run && (
-        <div className={`agent${waiting ? ' waiting' : ''}`}>
-          <span className="line">
-            <span className="dot" style={{ background: runColor[run.status] }} />
-            {runLabel[run.status]} · {run.stepsName} · Local
-            {run.startedAt ? ` · ${duration(run.startedAt, run.endedAt)}` : ''}
-          </span>
-          {step && (
-            <span className="mono">
-              Step {run.currentStep + 1} of {run.steps.length} · {step.name}
-            </span>
-          )}
-          {waiting && run.waiting && <span className="needs-reason">{run.waiting.reason}</span>}
+        <div className={`agent tone-${RUN_TONE[run.status]}`}>
+          <div className="agent-head">
+            <span className="dot" style={{ background: runColor[run.status] }} aria-hidden="true" />
+            <span className="agent-status">{runLabel[run.status]}</span>
+            <span className="agent-name">· {run.stepsName}</span>
+            <span className="spacer" />
+            {run.startedAt && <span className="agent-dur">{duration(run.startedAt, run.endedAt)}</span>}
+          </div>
+          <div className="agent-steps">
+            {run.steps.length > 0 && (
+              <>
+                <span className="segs" role="img" aria-label={`${stepText}${step ? `: ${step.name}` : ''}`} title={step ? `${stepText} · ${step.name}` : stepText}>
+                  {run.steps.map((s, i) => (
+                    <span key={i} style={{ background: segColor(s.status) }} />
+                  ))}
+                </span>
+                <span className="step-label">{stepText}</span>
+              </>
+            )}
+          </div>
+          {waiting && run.waiting && <div className="needs-reason">{run.waiting.reason}</div>}
         </div>
       )}
 
-      {older.length > 0 && (
+      <div className="card-foot">
+        {relations > 0 && (
+          <button type="button" className="foot-toggle" aria-expanded={relOpen} onClick={stop(() => setRelOpen((o) => !o))}>
+            <Icon name="link" size={11} width={2.2} />
+            {relations === 1 ? '1 relation' : `${relations} relations`}
+          </button>
+        )}
+        {older.length > 0 && (
+          <button type="button" className="foot-toggle" aria-expanded={olderOpen} onClick={stop(() => setOlderOpen((o) => !o))}>
+            {older.length === 1 ? '+1 earlier run' : `+${older.length} earlier runs`}
+          </button>
+        )}
+        <span className="spacer" />
+        <span className="created" title={createdLabel(issue.createdAt)}>
+          {shortDate(issue.createdAt)}
+        </span>
+      </div>
+
+      {relOpen && relations > 0 && <RelationsList issueId={issue.id} count={relations} />}
+
+      {olderOpen && older.length > 0 && (
         <ul className="run-stack" aria-label={`Earlier runs on ${issue.identifier}`}>
           {older.slice(0, OLDER_SHOWN).map((r) => (
             <li key={r.id}>
               <button type="button" className="run-row" title={`Open the log of ${r.stepsName} (${runLabel[r.status]})`} onClick={stop(() => onOpenLog(r.id))}>
-                <span className="dot" style={{ background: runColor[r.status] }} />
+                <span className="dot" style={{ background: runColor[r.status] }} aria-hidden="true" />
                 <span className="what">
                   {runLabel[r.status]} · {r.stepsName}
                 </span>
@@ -355,21 +419,7 @@ function Card({
           {older.length > OLDER_SHOWN && <li className="run-more">+{older.length - OLDER_SHOWN} earlier on Run history</li>}
         </ul>
       )}
-
-      {(issue.relationCount ?? 0) > 0 && <Relations issueId={issue.id} count={issue.relationCount!} />}
-
-      <div className="card-foot">
-        <span className="created">{createdLabel(issue.createdAt)}</span>
-          <button
-            className="btn small card-run"
-            type="button"
-            aria-haspopup="menu"
-            title={sets.length ? `Actions for ${issue.identifier}: ${sets.map((s) => s.label).join(', ')}` : `More for ${issue.identifier}`}
-            onClick={menu('run')}
-          >
-            Actions ▾
-          </button>
-      </div>
+      <div className="card-actions">{actionsButton}</div>
     </article>
   )
 }
@@ -407,7 +457,7 @@ function useKeptScroll(key: string): { ref: React.RefObject<HTMLDivElement>; onS
 // Clicks on these aren't "clicking off a ticket".
 const INTERACTIVE = '.card, button, a, input, select, textarea, label, [role="menu"], [role="button"], .issue-menu'
 
-export default function Board({ board, latestRun, runsByIssue, onReorderColumns, onOpenLog, selectedIssue, onSelect, onClearSelection, onStart, onUpdate, setsFor, onGlimpse, groupBy }: Props): JSX.Element {
+export default function Board({ board, latestRun, runsByIssue, onReorderColumns, onOpenLog, selectedIssue, onSelect, onClearSelection, onStart, onUpdate, setsFor, onGlimpse, groupBy, wide = true }: Props): JSX.Element {
   const scroll = useKeptScroll(board.project?.id ?? 'team')
   // Uses the event's path, fixed when the click started, rather than walking up from the target: a card
   // can re-render under the pointer (selecting it changes it), leaving the target detached from the card.
@@ -564,7 +614,7 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
         onDragEnd={() => setColDrop(null)}
       >
         <StatusIcon state={state} progress={progress.get(state.id)} />
-        <span className="name">{state.name}</span>
+        <h2 className="name">{state.name}</h2>
         <span className="count">{issues.length}</span>
         {points > 0 && (
           <span className="count points" title={`${points} points`}>
@@ -597,7 +647,6 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
             sets={sets}
             canEstimate={Boolean(board.team?.estimates.length)}
             onSelect={() => onSelect(issue.id)}
-            onStart={(setName) => onStart(issue.id, setName)}
             onMenu={(mode, at) => setMenu({ issueId: issue.id, mode, at })}
             onOpenLog={onOpenLog}
           />
@@ -618,7 +667,7 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
   }
 
   return (
-    <div className={`board-scroll${lanes ? ' lanes-scroll' : ''}`} ref={scroll.ref} onScroll={scroll.onScroll} onPointerDownCapture={(e) => (pressedOff.current = !onCardOrControl(e))} onClick={clickedOff}>
+    <div className={`board-scroll${lanes ? ' lanes-scroll' : ''}${wide ? ' wide' : ' snap'}`} ref={scroll.ref} onScroll={scroll.onScroll} onPointerDownCapture={(e) => (pressedOff.current = !onCardOrControl(e))} onClick={clickedOff}>
       {lanes ? (
         <div className="lanes">
           <div className="lane-heads">
@@ -668,6 +717,26 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
         <div className="board">
           {board.states.map((state) => {
             const issues = byState.get(state.id) ?? []
+            // An empty column folds to a narrow strip, still a place to drop cards and drag the column.
+            if (!issues.length)
+              return (
+                <section key={state.id} className={colClass(state, state.id, ' col-empty')} aria-label={`${state.name}, empty`} {...dropEvents(state, state.id)}>
+                  <div
+                    className="colstrip"
+                    draggable
+                    title={`${state.name}: no tickets. Drag to move this column`}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData(COL_DRAG_TYPE, state.name)
+                      e.dataTransfer.effectAllowed = 'move'
+                    }}
+                    onDragEnd={() => setColDrop(null)}
+                  >
+                    <StatusIcon state={state} progress={progress.get(state.id)} />
+                    <span className="colstrip-name">{state.name}</span>
+                    <span className="count">0</span>
+                  </div>
+                </section>
+              )
             return (
               <section key={state.id} className={colClass(state, state.id)} aria-label={state.name} {...dropEvents(state, state.id)}>
                 {head(state, issues)}

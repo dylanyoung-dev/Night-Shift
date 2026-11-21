@@ -1,5 +1,7 @@
 import type { LabelGroup, LinearIssue, LinearLabel, TeamMeta } from '../../../shared/types'
+import { useEffect, useRef, useState } from 'react'
 import { PRIORITY_LABEL } from './LinearIcons'
+import { Icon } from './Icons'
 
 export interface Filters {
   q: string
@@ -55,9 +57,10 @@ interface Props {
   onChange(f: Filters): void
   groupBy: string | null // label group id the board is split by
   onGroupBy(groupId: string | null): void
+  wide: boolean // all filters inline; otherwise behind a Filters button
 }
 
-export default function FilterBar({ filters, team, shown, total, onChange, groupBy, onGroupBy }: Props): JSX.Element {
+export default function FilterBar({ filters, team, shown, total, onChange, groupBy, onGroupBy, wide }: Props): JSX.Element {
   const set = <K extends keyof Filters>(k: K, v: Filters[K]): void => onChange({ ...filters, [k]: v })
   const groups = team?.labelGroups ?? []
   const setGroup = (gid: string, v: string): void => {
@@ -66,16 +69,45 @@ export default function FilterBar({ filters, team, shown, total, onChange, group
     else next[gid] = v
     onChange({ ...filters, groups: next })
   }
-  return (
-    <div className="filterbar" role="search" aria-label="Filter tickets">
-      <input
-        className="input filter-q"
-        type="search"
-        placeholder="Filter by ID or title…"
-        aria-label="Filter by ID or title"
-        value={filters.q}
-        onChange={(e) => set('q', e.target.value)}
-      />
+  const [open, setOpen] = useState(false)
+  const popRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (wide) setOpen(false)
+  }, [wide])
+  // The popover closes on a click outside it or on Esc (before Esc can close the ticket panel).
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent): void => {
+      if (popRef.current && !popRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      e.preventDefault()
+      setOpen(false)
+      popRef.current?.querySelector<HTMLButtonElement>('.filters-btn')?.focus()
+    }
+    window.addEventListener('mousedown', onDown, true)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('mousedown', onDown, true)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [open])
+
+  // Which filters are on, by name, for the Filters button.
+  const active = [
+    filters.assignee !== 'any' ? 'Assignee' : null,
+    ...groups.filter((g) => filters.groups?.[g.id] !== undefined).map((g) => g.name),
+    filters.label !== 'any' ? 'Label' : null,
+    filters.priority !== 'any' ? 'Priority' : null
+  ].filter((x): x is string => Boolean(x))
+  const summary = active.length
+    ? `${active.length} on: ${active.join(', ')}`
+    : ['Assignee', ...groups.map((g) => g.name.toLowerCase()), 'label', 'priority'].join(', ')
+
+  const selects = (
+    <>
       <select className="input filter-sel" aria-label="Assignee" value={filters.assignee} onChange={(e) => set('assignee', e.target.value)}>
         <option value="any">Any assignee</option>
         <option value="none">Unassigned</option>
@@ -128,18 +160,43 @@ export default function FilterBar({ filters, team, shown, total, onChange, group
           </option>
         ))}
       </select>
-      {groups.length > 0 && (
-        <label className="filter-group">
-          <span>Group by</span>
-          <select className="input filter-sel" aria-label="Group by" value={groupBy ?? ''} onChange={(e) => onGroupBy(e.target.value || null)}>
-            <option value="">None</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
-        </label>
+    </>
+  )
+
+  return (
+    <div className="filterbar" role="search" aria-label="Filter tickets">
+      <label className="filter-search">
+        <span className="sr-only">Filter by ID or title</span>
+        <Icon name="search" size={14} />
+        <input
+          className="input filter-q"
+          type="search"
+          placeholder="Filter by ID or title"
+          value={filters.q}
+          onChange={(e) => set('q', e.target.value)}
+        />
+      </label>
+      {wide ? (
+        <div className="filter-sels">{selects}</div>
+      ) : (
+        <div className="filter-pop-wrap" ref={popRef}>
+          <button
+            type="button"
+            className={`filters-btn${active.length ? ' on' : ''}`}
+            aria-expanded={open}
+            aria-haspopup="dialog"
+            onClick={() => setOpen((o) => !o)}
+          >
+            <Icon name="filters" size={14} />
+            Filters
+            <span className="filters-summary">{summary}</span>
+          </button>
+          {open && (
+            <div className="filter-pop" role="dialog" aria-label="Filters">
+              {selects}
+            </div>
+          )}
+        </div>
       )}
       {isFiltering(filters) && (
         <>
@@ -150,6 +207,20 @@ export default function FilterBar({ filters, team, shown, total, onChange, group
             Clear filters
           </button>
         </>
+      )}
+      <span className="spacer" />
+      {groups.length > 0 && (
+        <label className="filter-group">
+          <span>Group by</span>
+          <select className="input filter-sel" value={groupBy ?? ''} onChange={(e) => onGroupBy(e.target.value || null)}>
+            <option value="">None</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
     </div>
   )

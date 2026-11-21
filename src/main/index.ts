@@ -65,6 +65,10 @@ async function waitForLock(): Promise<boolean> {
 }
 
 let win: BrowserWindow | null = null
+// The window buttons sit on the app's own top bar: transparent, so the bar's colour shows through.
+function titleBarColors(): Electron.TitleBarOverlay {
+  return { color: '#00000000', symbolColor: nativeTheme.shouldUseDarkColors ? '#ecebe6' : '#3d3c38', height: 52 }
+}
 let board: BoardData = { states: [], issues: [], fetchedAt: null }
 
 // The board is kept for this machine's board refresh interval (Settings › Linear) before Linear is asked
@@ -606,7 +610,7 @@ function schedulePolling(): void {
 // System, dark or light. Electron passes it on to the page (prefers-color-scheme) and the title bar.
 function applyTheme(): void {
   nativeTheme.themeSource = getSettings().theme
-  win?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0C1024' : '#F5F0E3')
+  win?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#161513' : '#F5F4F1')
 }
 
 // Reloads the board if its cache has run out (also on coming back into focus).
@@ -762,6 +766,18 @@ function registerIpc(): void {
       return { error: `Linear: ${(err as Error).message}` }
     }
   })
+  // The panel's refresh: this one ticket from Linear, straight onto the board.
+  ipcMain.handle('issue:sync', async (_e, issueId: string) => {
+    const key = getLinearKey()
+    if (!key) return { error: 'Add your Linear API key in Settings.' }
+    if (!board.issues.some((i) => i.id === issueId)) return { error: 'That ticket is no longer on the board.' }
+    try {
+      await syncIssue(key, issueId)
+      return { ok: true }
+    } catch (err) {
+      return { error: `Linear: ${(err as Error).message}` }
+    }
+  })
   ipcMain.handle('issue:relations', async (_e, issueId: string) => {
     const key = getLinearKey()
     if (!key) return { error: 'Add your Linear API key in Settings.' }
@@ -888,10 +904,14 @@ function createWindow(): void {
     center: true,
     minWidth: 960,
     minHeight: 600,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0C1024' : '#F5F0E3',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#161513' : '#F5F4F1',
     title: 'Night Shift',
     icon: appIcon,
     autoHideMenuBar: true,
+    // No Windows title bar: the app's own top bars are the drag area, and the minimize, maximize and
+    // close buttons are drawn over their right end (see --wco in styles.css).
+    titleBarStyle: 'hidden',
+    titleBarOverlay: titleBarColors(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -922,7 +942,10 @@ app.whenReady().then(async () => {
   updateTray()
   log.info(`Night Shift ${app.getVersion()} started${app.isPackaged ? '' : ' (development)'}`)
   startUpdater((st) => send('update', st))
-  nativeTheme.on('updated', () => win?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0C1024' : '#F5F0E3'))
+  nativeTheme.on('updated', () => {
+    win?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#161513' : '#F5F4F1')
+    win?.setTitleBarOverlay(titleBarColors())
+  })
   // A fresh board from the last session is used as is; an older one shows while the new one loads.
   if (!loadBoardCache()) void refreshBoard()
   applyMode()

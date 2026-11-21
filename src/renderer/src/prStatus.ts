@@ -9,6 +9,7 @@ const POLL_MS = 60_000
 let statuses: Record<string, PrStatus> = {}
 let error: string | null = null
 let loading = false
+let boardUrls: string[] = [] // every live PR on the board, kept by the poller
 const listeners = new Set<() => void>()
 const notify = (): void => listeners.forEach((l) => l())
 
@@ -44,13 +45,20 @@ export function usePrPolling(issues: LinearIssue[]): void {
   const key = live(issues).join('\n')
   useEffect(() => {
     const urls = key ? key.split('\n') : []
+    boardUrls = urls
     if (!urls.length) return
     void refreshPrs(urls)
     const t = setInterval(() => void refreshPrs(urls), POLL_MS)
+    // While GitHub is still working out whether a PR can merge ("unknown"), look again sooner.
+    const soon = setInterval(() => {
+      const unsure = urls.filter((u) => statuses[u]?.state === 'open' && statuses[u]?.merge === 'unknown')
+      if (unsure.length && !loading) void refreshPrs(unsure, true)
+    }, 10_000)
     const onFocus = (): void => void refreshPrs(urls)
     window.addEventListener('focus', onFocus)
     return () => {
       clearInterval(t)
+      clearInterval(soon)
       window.removeEventListener('focus', onFocus)
     }
   }, [key])
@@ -65,7 +73,13 @@ export async function mergePullRequest(url: string): Promise<string | null> {
   if (!window.nightShift.mergePr) return 'Restart Night Shift to merge from here.'
   const r = await window.nightShift.mergePr(url)
   await refreshPrs([url], true)
-  return 'error' in r ? r.error : null
+  if ('error' in r) return r.error
+  // Merging moves the base branch, so other PRs may now conflict. GitHub works that out in the
+  // background (reporting "unknown" for a few seconds), so check them all now and twice more.
+  const others = (): string[] => boardUrls.filter((u) => u !== url)
+  void refreshPrs(others(), true)
+  for (const ms of [8_000, 25_000]) setTimeout(() => void refreshPrs(others(), true), ms)
+  return null
 }
 
 // One short phrase for what's holding a PR up, or null when it's good to go (or merged/closed).

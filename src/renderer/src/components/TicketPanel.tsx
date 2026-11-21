@@ -2,15 +2,18 @@ import { useEffect, useState } from 'react'
 import type { IssueComment, IssueDetail, LinearIssue } from '../../../shared/types'
 import { cachedIssueDetail, useIssueDetail } from '../issueDetailCache'
 import { runColor, runLabel } from '../util'
+import { Icon } from './Icons'
 import { Avatar, DocIcon, MilestoneIcon, PRIORITY_LABEL, PriorityIcon, StatusIcon } from './LinearIcons'
 import Markdown from './Markdown'
 import RunDetails, { type RunDetailsProps } from './RunPanel'
 import PrStrip from './PrStrip'
+import { refreshPrs } from '../prStatus'
 
 // 'run', 'ticket', 'spec' (the spec document, whichever it turns out to be) or a document id
 export type PanelTab = string
 
 interface Props extends RunDetailsProps {
+  wide: boolean // docked beside the board; otherwise a drawer over it
   tabRequest: { tab: PanelTab; at: number } | null // set from the card menu ("Glimpse in Linear", "View spec")
   onOpenLinear(url: string): void
   onClose(): void
@@ -20,7 +23,7 @@ interface Props extends RunDetailsProps {
 // Widths are a share of the window, so the panel grows on a wide or ultrawide screen instead of
 // staying a thin strip; min and max are in pixels. The board always keeps at least BOARD_MIN.
 const WIDTHS = {
-  run: { key: 'nightshift.panelShare', min: 380, max: 1100, def: 0.3 },
+  run: { key: 'nightshift.panelShare', min: 380, max: 1100, def: 0.3125 }, // about 600px on a 1920px screen
   linear: { key: 'nightshift.glimpseShare', min: 520, max: 1800, def: 0.45 }
 }
 const BOARD_MIN = 520
@@ -47,6 +50,15 @@ function useWindowWidth(): number {
   return w
 }
 
+const STATUS_TONE: Record<NonNullable<Props['run']>['status'], string> = {
+  queued: 'queued',
+  running: 'running',
+  waiting: 'needs',
+  done: 'done',
+  failed: 'failed',
+  stopped: 'idle'
+}
+
 const when = (iso: string): string => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 const day = (iso: string): string => new Date(`${iso.slice(0, 10)}T12:00:00`).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 const stateOf = (s: { name: string; type: string; color: string }) => ({ id: s.name, name: s.name, type: s.type, color: s.color, position: 0 })
@@ -55,7 +67,7 @@ const stateOf = (s: { name: string; type: string; color: string }) => ({ id: s.n
 // sub-issues, comments, properties) and the ticket's documents (the spec). Linear is only asked for
 // the ticket's details once the Ticket or a document tab is opened; after that they're cached.
 export default function TicketPanel(props: Props): JSX.Element {
-  const { issue, run, tabRequest, onOpenLinear, onClose } = props
+  const { issue, run, tabRequest, onOpenLinear, onClose, wide } = props
   const [tab, setTab] = useState<PanelTab>(tabRequest?.tab ?? 'run')
   useEffect(() => {
     if (tabRequest) setTab(tabRequest.tab)
@@ -70,6 +82,29 @@ export default function TicketPanel(props: Props): JSX.Element {
   const sig = issue ? JSON.stringify(issue) : ''
   const { detail, error, loading, reload } = useIssueDetail(issue?.id ?? null, sig, linear)
   const d = linear ? detail : cachedIssueDetail(issue?.id ?? null)
+
+  // Refresh: the ticket from Linear (card and details) and its pull requests from GitHub, all at once.
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
+  useEffect(() => setRefreshError(null), [issue?.id])
+  async function refreshAll(): Promise<void> {
+    if (!issue) return
+    setRefreshing(true)
+    setRefreshError(null)
+    try {
+      const [synced] = await Promise.all([
+        window.nightShift.syncIssue?.(issue.id) ?? Promise.resolve({ ok: true as const }),
+        refreshPrs(issue.pullRequests.map((p) => p.url), true)
+      ])
+      if (synced && 'error' in synced) setRefreshError(synced.error)
+      if (linear || d) reload()
+    } catch (err) {
+      setRefreshError((err as Error).message)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+  const busy = refreshing || (linear && loading)
 
   const windowW = useWindowWidth()
   const [shares, setShares] = useState(() => ({ run: savedShare('run'), linear: savedShare('linear') }))
@@ -110,59 +145,79 @@ export default function TicketPanel(props: Props): JSX.Element {
   const identifier = issue?.identifier ?? run?.identifier ?? ''
   const openUrl = (url: string) => () => onOpenLinear(url)
 
+  const title = d?.title ?? issue?.title ?? run?.title ?? ''
+  const tone = run ? STATUS_TONE[run.status] : 'idle'
+
   return (
-    <aside className="glimpse ticket-panel" style={{ flexBasis: width, width, minWidth: Math.min(WIDTHS[group].min, width) }} aria-label={`${identifier} details`}>
-      <div className="glimpse-resize" role="separator" aria-orientation="vertical" aria-label="Resize" onPointerDown={startResize} />
+    <aside
+      className={`glimpse ticket-panel${wide ? '' : ' drawer'}`}
+      style={wide ? { flexBasis: width, width, minWidth: Math.min(WIDTHS[group].min, width) } : undefined}
+      aria-label={`${identifier} details`}
+    >
+      {wide && <div className="glimpse-resize" role="separator" aria-orientation="vertical" aria-label="Resize" onPointerDown={startResize} />}
       <header className="glimpse-head">
-        <span className="mono">{identifier}</span>
+        <span className="mono panel-id">{identifier}</span>
+        {(run || issue) && (
+          <span className={`status-pill ${tone}`}>
+            {run ? (
+              <>
+                <span className="dot" style={{ background: runColor[run.status] }} aria-hidden="true" />
+                {runLabel[run.status]}
+              </>
+            ) : (
+              issue?.stateName
+            )}
+          </span>
+        )}
         {d?.parent && (
           <button type="button" className="glimpse-crumb" onClick={openUrl(d.parent.url)} title={`${d.parent.identifier} ${d.parent.title}`}>
             › {d.parent.title}
           </button>
         )}
         <span className="spacer" />
-        {run && (
-          <span className="run-state">
-            <span className="dot" style={{ background: runColor[run.status] }} />
-            {runLabel[run.status]}
-          </span>
-        )}
-        {linear && (
-          <button className={`btn small icon-only${loading ? ' spinning' : ''}`} type="button" onClick={reload} disabled={loading} title={loading ? 'Updating from Linear…' : 'Reload from Linear'} aria-label="Reload from Linear">
-            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+        {issue && (
+          <button
+            className={`icon-btn bordered${busy ? ' spinning' : ''}`}
+            type="button"
+            onClick={() => void refreshAll()}
+            disabled={busy}
+            title={busy ? 'Refreshing…' : 'Refresh this ticket from Linear and its pull request from GitHub'}
+            aria-label="Refresh ticket and pull request"
+          >
+            <Icon name="refresh" size={14} />
           </button>
         )}
         {issue && (
-          <button className="btn small" type="button" onClick={openUrl(doc && tab !== 'ticket' && tab !== 'run' ? doc.url : issue.url)} title="Open in your browser">
+          <button className="btn small open-linear" type="button" onClick={openUrl(doc && tab !== 'ticket' && tab !== 'run' ? doc.url : issue.url)} title="Open in your browser">
             Open in Linear
+            <Icon name="external" size={12} width={2.2} />
           </button>
         )}
-        <button className="btn small icon-only" type="button" onClick={onClose} title="Close (Esc)" aria-label="Close panel">
-          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-            <path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
+        <button className="icon-btn" type="button" onClick={onClose} title="Close (Esc)" aria-label="Close panel">
+          <Icon name="close" size={16} />
         </button>
       </header>
 
-      {issue && <PrStrip prs={issue.pullRequests} openUrl={onOpenLinear} />}
-
-      {issue && (
-        <div className="glimpse-tabs" role="tablist" aria-label="Run, ticket and documents">
-          <button type="button" role="tab" aria-selected={tab === 'run'} className={tab === 'run' ? 'on' : ''} onClick={() => setTab('run')}>
-            Run
-          </button>
-          <button type="button" role="tab" aria-selected={tab === 'ticket'} className={tab === 'ticket' ? 'on' : ''} onClick={() => setTab('ticket')}>
-            Ticket
-          </button>
-          {docTabs.map((x) => (
-            <button key={x.id} type="button" role="tab" aria-selected={tabOn(x.id)} className={tabOn(x.id) ? 'on' : ''} onClick={() => setTab(x.id)}>
-              <DocIcon /> {x.title}
+      <div className="panel-titleblock">
+        {refreshError && <div className="note warn">{refreshError}</div>}
+        {title && <h2 className="panel-title">{title}</h2>}
+        {issue && <PrStrip prs={issue.pullRequests} openUrl={onOpenLinear} />}
+        {issue && (
+          <div className="glimpse-tabs" role="tablist" aria-label="Run, ticket and documents">
+            <button type="button" role="tab" aria-selected={tab === 'run'} className={tab === 'run' ? 'on' : ''} onClick={() => setTab('run')}>
+              Run
             </button>
-          ))}
-        </div>
-      )}
+            <button type="button" role="tab" aria-selected={tab === 'ticket'} className={tab === 'ticket' ? 'on' : ''} onClick={() => setTab('ticket')}>
+              Ticket
+            </button>
+            {docTabs.map((x) => (
+              <button key={x.id} type="button" role="tab" aria-selected={tabOn(x.id)} className={tabOn(x.id) ? 'on' : ''} onClick={() => setTab(x.id)}>
+                <DocIcon /> {x.title}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {!linear && <RunDetails {...props} />}
 
@@ -201,7 +256,6 @@ function TicketDetails({ d, onOpen, onOpenDoc }: { d: IssueDetail; onOpen(url: s
   return (
     <div className="glimpse-grid">
       <article className="glimpse-main">
-        <h2 className="glimpse-title">{d.title}</h2>
         {d.description.trim() ? <Markdown text={d.description} /> : <p className="note">No description.</p>}
 
         {d.children.length > 0 && (
