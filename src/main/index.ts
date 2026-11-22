@@ -940,6 +940,10 @@ function createWindow(): void {
       sandbox: false
     }
   })
+  // The keyboard's Back key and the mouse's back button arrive on Windows as app commands, not key presses.
+  win.on('app-command', (_e, cmd) => {
+    if (cmd === 'browser-backward') win?.webContents.send('nav-back')
+  })
   win.on('focus', () => {
     win?.flashFrame(false)
     syncIfStale()

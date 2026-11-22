@@ -134,6 +134,7 @@ export interface Settings {
   maxConcurrent: number // local runs at once, across all states
   hiddenStateTypes: string[] // Linear state types left off the board
   columnOrder: string[] // board columns by state name, as arranged by dragging; empty = Linear's order
+  columns: Record<string, ColumnSettings> // per board column, by state name
   projects: NightShiftProject[]
   activeProjectId: string | null // null = every ticket in the team
   automations: Automation[]
@@ -152,6 +153,12 @@ export interface Settings {
 // The settings every machine shares (one copy, on the host), and the host machine's own.
 export type SharedSettings = Pick<Settings, 'linearTeamKey' | 'baseBranch' | 'worktreeMode' | 'pollSeconds' | 'projects' | 'automations'>
 export type HostMachineSettings = Pick<Settings, 'repoPath' | 'worktreePath' | 'maxConcurrent'>
+
+// How one board column looks. Unset fields keep Linear's look.
+export interface ColumnSettings {
+  color?: string // #rrggbb, in place of the state's color in Linear
+  muted?: boolean // greyed out: still shown and droppable, but set apart (On Hold, say)
+}
 
 export interface SettingsUpdate extends Partial<Omit<Settings, 'hasLinearKey' | 'hasGithubToken'>> {
   linearApiKey?: string
@@ -599,6 +606,7 @@ export interface NightShiftApi {
   usageProgress?(): Promise<{ done: number; total: number; scanning: boolean }>
   continueRun?(runId: string, text: string): Promise<{ ok: true } | { error: string }> // reply to a finished run: resume its Claude session (optional: older preloads lack it)
   onOpenRun(cb: (runId: string) => void): () => void // a notification was clicked
+  onNavBack?(cb: () => void): () => void // the keyboard's Back key or the mouse's back button (Windows app command)
   getAutomationStatus(): Promise<Record<string, AutomationStatus>>
   runAutomationNow(id: string): Promise<{ ok: true; message: string } | { error: string }>
   onAutomationStatus(cb: (status: Record<string, AutomationStatus>) => void): () => void

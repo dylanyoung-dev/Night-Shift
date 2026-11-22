@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { globalRunKey, isActiveRun, orderStates, setLabel, type BoardData, type IssueUpdate, type RemoteStatus, type LinearIssue, type Run, type Settings, type StepChoice, type StepsFile } from '../../shared/types'
+import { globalRunKey, isActiveRun, orderStates, setLabel, type BoardData, type ColumnSettings, type IssueUpdate, type RemoteStatus, type LinearIssue, type Run, type Settings, type StepChoice, type StepsFile } from '../../shared/types'
 import Sidebar, { View } from './components/Sidebar'
 import Board, { clearRelationsCache } from './components/Board'
 import TicketPanel, { type PanelTab } from './components/TicketPanel'
@@ -89,11 +89,20 @@ export default function App(): JSX.Element {
   const [startMenu, setStartMenu] = useState(false)
   const [switchingTo, setSwitchingTo] = useState<string | null>(null) // project name while its tickets load
   const columnOrder = settings?.columnOrder ?? []
+  const columnSettings = settings?.columns ?? {}
   const shownBoard = useMemo(
     () => ({ ...board, states: orderStates(board.states, columnOrder), issues: applyFilters(board.issues, filters, board.team) }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [board, filters, columnOrder.join('|')]
   )
+  // A column's header menu changed its color or greyed it out.
+  function setColumnSettings(name: string, cfg: ColumnSettings): void {
+    const next = { ...columnSettings }
+    if (cfg.color || cfg.muted) next[name] = cfg
+    else delete next[name]
+    setSettings((s) => (s ? { ...s, columns: next } : s))
+    void api.saveSettings({ columns: next }).then(setSettings)
+  }
   // Dragging a column header saves the new order (by state name, so it travels with exported settings).
   function reorderColumns(names: string[]): void {
     setSettings((s) => (s ? { ...s, columnOrder: names } : s))
@@ -135,9 +144,11 @@ export default function App(): JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     window.addEventListener('mouseup', onMouse)
+    const offNav = api.onNavBack?.(() => setSelectedIssue(null)) // Back key or button as a Windows app command
     return () => {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('mouseup', onMouse)
+      offNav?.()
     }
   }, [logRunId, selectedIssue])
   const logRun = logRunId ? runs.find((r) => r.id === logRunId) ?? null : null
@@ -400,6 +411,8 @@ export default function App(): JSX.Element {
                   latestRun={latestRun}
                   runsByIssue={runsByIssue}
                   onReorderColumns={reorderColumns}
+                  columnSettings={columnSettings}
+                  onColumnSettings={setColumnSettings}
                   onOpenLog={setLogRunId}
                   selectedIssue={selectedIssue}
                   onSelect={setSelectedIssue}
@@ -434,6 +447,13 @@ export default function App(): JSX.Element {
                   onStop={(id) => void api.stopRun(id)}
                   onOpenLog={setLogRunId}
                   onOpenLinear={(url) => void api.openInBrowser(url)}
+                  onShowIssue={(identifier) => {
+                    const hit = shownBoard.issues.find((i) => i.identifier === identifier)
+                    if (!hit) return false
+                    setSelectedIssue(hit.id)
+                    requestAnimationFrame(() => document.querySelector(`[data-issue="${CSS.escape(hit.id)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' }))
+                    return true
+                  }}
                   onClose={() => setSelectedIssue(null)}
                 />
                 )}
@@ -504,6 +524,11 @@ export default function App(): JSX.Element {
               onClose={backFromLog}
               onStop={(id) => void api.stopRun(id)}
               onOpenLinear={(url) => void api.openInBrowser(url)}
+              onOpenBoard={(id) => {
+                setLogRunId(null)
+                setView('board')
+                setSelectedIssue(id)
+              }}
               actions={logIssue ? setsFor(logIssue.stateName) : []}
               // Start the action and follow the new run here.
               onAction={(setName) => logIssue && void start(logIssue.id, setName).then((r) => r && setLogRunId(r.id))}

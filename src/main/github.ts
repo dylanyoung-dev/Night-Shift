@@ -118,6 +118,8 @@ function statusOf(repo: RawRepo, p: RawPr, items: PrCheck[]): PrStatus {
 
 const lit = (s: string): string => JSON.stringify(s)
 
+let lastToken: string | null = null
+let checkRunsRefused = false // set when GitHub refuses REST check runs (fine-grained tokens)
 let graphqlChecksRefused = false // set when GitHub refuses checks over GraphQL (fine-grained tokens)
 type GqlReply<T> = { data?: Record<string, T | null>; errors?: { message: string; type?: string }[] }
 const errText = (e: { message: string; type?: string }[] | undefined): string => (e ?? []).slice(0, 5).map((x) => `${x.type ?? ''} ${x.message}`.trim()).join(' | ')
@@ -143,7 +145,17 @@ async function gql<T>(token: string | null, batch: Wanted[], body: (w: Wanted) =
 async function restChecks(token: string | null, w: Wanted, sha: string): Promise<PrCheck[]> {
   const repo = `/repos/${encodeURIComponent(w.owner)}/${encodeURIComponent(w.name)}`
   const items: PrCheck[] = []
-  const runs = (await api(token, 'GET', `${repo}/commits/${sha}/check-runs?per_page=100`).catch(() => null)) as { check_runs?: Record<string, string | null>[] } | null
+  // Fine-grained tokens can't be given Checks access, so GitHub refuses check runs with a 403. Ask once,
+  // then go straight to the Actions and commit status routes (until the token changes or the app restarts).
+  const runs = checkRunsRefused
+    ? null
+    : ((await api(token, 'GET', `${repo}/commits/${sha}/check-runs?per_page=100`).catch((err: Error) => {
+        if (/not accessible|forbidden/i.test(err.message)) {
+          checkRunsRefused = true
+          log.info('github: this token cannot read check runs (normal for fine-grained tokens); using GitHub Actions and commit statuses from now on')
+        }
+        return null
+      })) as { check_runs?: Record<string, string | null>[] } | null)
   for (const c of runs?.check_runs ?? []) items.push(checkOf({ __typename: 'CheckRun', name: c.name, status: (c.status ?? '').toUpperCase(), conclusion: (c.conclusion ?? '').toUpperCase(), detailsUrl: c.details_url ?? c.html_url }))
   let via = `check runs ${items.length}`
   if (!items.length) {
@@ -164,6 +176,12 @@ async function restChecks(token: string | null, w: Wanted, sha: string): Promise
 
 // Status of each pull request URL. Results stay fresh for 30 s unless refresh is set.
 export async function fetchPrStatuses(token: string | null, urls: string[], refresh = false): Promise<{ statuses: Record<string, PrStatus>; error?: string }> {
+  // A new token may have more access: ask GitHub for everything again.
+  if (token !== lastToken) {
+    lastToken = token
+    checkRunsRefused = false
+    graphqlChecksRefused = false
+  }
   const out: Record<string, PrStatus> = {}
   let error: string | undefined
   const wanted: Wanted[] = []

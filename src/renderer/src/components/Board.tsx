@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { groupLabel, shortLabel } from './FilterBar'
-import { DEFAULT_FAILURE_LABEL, isActiveRun, type BoardData, type IssueRelation, type IssueUpdate, type LinearIssue, type LinearLabel, type LinearState, type Run, type StepChoice } from '../../../shared/types'
+import { DEFAULT_FAILURE_LABEL, isActiveRun, type BoardData, type ColumnSettings, type IssueRelation, type IssueUpdate, type LinearIssue, type LinearLabel, type LinearState, type Run, type StepChoice } from '../../../shared/types'
 import IssueMenu, { type MenuMode } from './IssueMenu'
+import ColumnMenu from './ColumnMenu'
 import { duration, runColor, runLabel } from '../util'
 import PrChip from './PrChip'
 import { Icon } from './Icons'
@@ -21,6 +22,8 @@ interface Props {
   latestRun: Map<string, Run>
   runsByIssue: Map<string, Run[]> // every run per ticket, newest first
   onReorderColumns(stateNames: string[]): void // a column header was dragged to a new place
+  columnSettings?: Record<string, ColumnSettings> // per column, by state name: color, greyed out
+  onColumnSettings?(stateName: string, cfg: ColumnSettings): void
   onOpenLog(runId: string): void
   selectedIssue: string | null
   onSelect(issueId: string): void
@@ -109,7 +112,8 @@ export function clearRelationsCache(): void {
   relationsCache.clear()
 }
 
-function RelationsList({ issueId, count }: { issueId: string; count: number }): JSX.Element {
+// onShow: select a ticket on the board and open its panel; false when it isn't on the board.
+function RelationsList({ issueId, count, onShow }: { issueId: string; count: number; onShow(id: string): boolean }): JSX.Element {
   const [items, setItems] = useState<IssueRelation[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -156,8 +160,10 @@ function RelationsList({ issueId, count }: { issueId: string; count: number }): 
                 <button
                   type="button"
                   className={`run-row${done ? ' done' : ''}`}
-                  title={`${RELATION_LABEL[r.kind]}: ${r.issue.identifier} ${r.issue.title} (${r.issue.state.name}) · open in Linear`}
-                  onClick={() => open(r.issue.url)}
+                  title={`${RELATION_LABEL[r.kind]}: ${r.issue.identifier} ${r.issue.title} (${r.issue.state.name})`}
+                  // Shows the ticket here: selected on the board with its panel open. Only a ticket that
+                  // isn't on the board (done, hidden or filtered out) opens in Linear.
+                  onClick={() => onShow(r.issue.id) || open(r.issue.url)}
                 >
                   <span className="kind">{RELATION_LABEL[r.kind]}</span>
                   <span className="dot" style={{ background: r.issue.state.color }} aria-hidden="true" />
@@ -202,6 +208,7 @@ function Card({
   sets,
   canEstimate,
   onSelect,
+  onShowIssue,
   onMenu,
   onOpenLog
 }: {
@@ -214,6 +221,7 @@ function Card({
   sets: StepChoice[]
   canEstimate: boolean
   onSelect(): void
+  onShowIssue(id: string): boolean // another ticket, from the relations list
   onMenu(mode: MenuMode, at: { x: number; y: number }): void
   onOpenLog(runId: string): void
 }): JSX.Element {
@@ -257,6 +265,7 @@ function Card({
       className={`card${selected ? ' selected' : ''}${waiting ? ' needs-you' : active ? ' running' : failed ? ' failed' : ''}`}
       tabIndex={0}
       aria-label={`${issue.identifier} ${issue.title}`}
+      data-issue={issue.id}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(DRAG_TYPE, issue.id)
@@ -270,25 +279,18 @@ function Card({
       onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), onSelect())}
     >
       <div className="card-top">
-        <button type="button" className="chip-btn status-btn" aria-label={`Status: ${state.name}. Change`} onClick={menu('status')}>
-          <StatusIcon state={state} progress={progress} />
-        </button>
         <span className="id">{issue.identifier}</span>
-        <button type="button" className="chip-btn more-btn" aria-label={`More for ${issue.identifier}`} aria-haspopup="menu" onClick={menu('actions')}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <circle cx="5" cy="12" r="1.8" />
-            <circle cx="12" cy="12" r="1.8" />
-            <circle cx="19" cy="12" r="1.8" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          className={`chip-btn prio-btn p${issue.priority}`}
-          aria-label={`Priority: ${PRIORITY_LABEL[issue.priority] ?? 'No priority'}. Change`}
-          onClick={menu('priority')}
-        >
-          <PriorityIcon priority={issue.priority} />
-        </button>
+        {/* No priority shows nothing; set one from the gear (or a right-click). */}
+        {issue.priority > 0 && (
+          <button
+            type="button"
+            className={`chip-btn prio-btn p${issue.priority}`}
+            aria-label={`Priority: ${PRIORITY_LABEL[issue.priority] ?? 'No priority'}. Change`}
+            onClick={menu('priority')}
+          >
+            <PriorityIcon priority={issue.priority} />
+          </button>
+        )}
         <span className="spacer" />
         {issue.blocked && (
           <span className="blocked-tag" title="Blocked by another ticket">
@@ -296,6 +298,9 @@ function Card({
             Blocked
           </span>
         )}
+        <button type="button" className="chip-btn card-gear" aria-label={`Settings for ${issue.identifier}`} title="Status, priority, assignee, labels and more (also on right-click)" aria-haspopup="menu" onClick={menu('actions')}>
+          <Icon name="settings" size={14} />
+        </button>
         <button
           type="button"
           className="chip-btn avatar-btn"
@@ -371,7 +376,12 @@ function Card({
               <>
                 <span className="segs" role="img" aria-label={`${stepText}${step ? `: ${step.name}` : ''}`} title={step ? `${stepText} · ${step.name}` : stepText}>
                   {run.steps.map((s, i) => (
-                    <span key={i} style={{ background: segColor(s.status) }} />
+                    // The step running now fills up over and over, so it doesn't read as finished.
+                    i === run.currentStep && run.status === 'running' ? (
+                      <span key={i} className="seg-now" />
+                    ) : (
+                      <span key={i} style={{ background: segColor(s.status) }} />
+                    )
                   ))}
                 </span>
                 <span className="step-label">{stepText}</span>
@@ -399,7 +409,7 @@ function Card({
         </span>
       </div>
 
-      {relOpen && relations > 0 && <RelationsList issueId={issue.id} count={relations} />}
+      {relOpen && relations > 0 && <RelationsList issueId={issue.id} count={relations} onShow={onShowIssue} />}
 
       {olderOpen && older.length > 0 && (
         <ul className="run-stack" aria-label={`Earlier runs on ${issue.identifier}`}>
@@ -458,7 +468,7 @@ function useKeptScroll(key: string): { ref: React.RefObject<HTMLDivElement>; onS
 // Clicks on these aren't "clicking off a ticket".
 const INTERACTIVE = '.card, button, a, input, select, textarea, label, [role="menu"], [role="button"], .issue-menu'
 
-export default function Board({ board, latestRun, runsByIssue, onReorderColumns, onOpenLog, selectedIssue, onSelect, onClearSelection, onStart, onUpdate, setsFor, onGlimpse, groupBy, wide = true }: Props): JSX.Element {
+export default function Board({ board, latestRun, runsByIssue, onReorderColumns, columnSettings = {}, onColumnSettings, onOpenLog, selectedIssue, onSelect, onClearSelection, onStart, onUpdate, setsFor, onGlimpse, groupBy, wide = true }: Props): JSX.Element {
   const scroll = useKeptScroll(board.project?.id ?? 'team')
   // Uses the event's path, fixed when the click started, rather than walking up from the target: a card
   // can re-render under the pointer (selecting it changes it), leaving the target detached from the card.
@@ -597,8 +607,34 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
     }
   }
 
+  // A column's own color tints its background (lightly; see --tint-mix).
+  const colStyle = (state: LinearState): React.CSSProperties | undefined => {
+    const c = columnSettings[state.name]?.color
+    return c ? ({ '--col-tint': c } as React.CSSProperties) : undefined
+  }
   const colClass = (state: LinearState, cell: string, extra = ''): string =>
-    `col${extra}${dropState === cell ? ' drop' : ''}${colDrop?.id === state.id ? ` col-drop-${colDrop.side}` : ''}`
+    `col${extra}${columnSettings[state.name]?.color ? ' tinted' : ''}${columnSettings[state.name]?.muted ? ' muted' : ''}${dropState === cell ? ' drop' : ''}${colDrop?.id === state.id ? ` col-drop-${colDrop.side}` : ''}`
+
+  // Selects a ticket from a relations list and scrolls its card into view. False when it isn't on the board.
+  function showIssue(id: string): boolean {
+    if (!board.issues.some((i) => i.id === id)) return false
+    onSelect(id)
+    requestAnimationFrame(() => document.querySelector(`[data-issue="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' }))
+    return true
+  }
+
+  // The column settings menu: open for one column at a time, at the click.
+  const [colMenu, setColMenu] = useState<{ name: string; x: number; y: number } | null>(null)
+  const openColMenu = (name: string) => (e: React.MouseEvent<HTMLElement>): void => {
+    if (!onColumnSettings) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.type === 'contextmenu') setColMenu({ name, x: e.clientX, y: e.clientY })
+    else {
+      const r = e.currentTarget.getBoundingClientRect()
+      setColMenu({ name, x: r.right - 260, y: r.bottom + 4 })
+    }
+  }
 
   function head(state: LinearState, issues: LinearIssue[]): JSX.Element {
     const points = issues.reduce((sum, i) => sum + (i.estimate ?? 0), 0)
@@ -613,6 +649,7 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
           e.dataTransfer.effectAllowed = 'move'
         }}
         onDragEnd={() => setColDrop(null)}
+        onContextMenu={openColMenu(state.name)}
       >
         <StatusIcon state={state} progress={progress.get(state.id)} />
         <h2 className="name">{state.name}</h2>
@@ -627,6 +664,11 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
           <span className="steps-tag" title={`Actions: ${sets.map((s) => s.label).join(', ')}`}>
             {sets.length === 1 ? '1 action' : `${sets.length} actions`}
           </span>
+        )}
+        {onColumnSettings && (
+          <button type="button" className="chip-btn col-more" aria-label={`${state.name} column settings`} title="Column settings" aria-haspopup="dialog" onClick={openColMenu(state.name)}>
+            <Icon name="settings" size={14} />
+          </button>
         )}
       </div>
     )
@@ -648,6 +690,7 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
             sets={sets}
             canEstimate={Boolean(board.team?.estimates.length)}
             onSelect={() => onSelect(issue.id)}
+            onShowIssue={showIssue}
             onMenu={(mode, at) => setMenu({ issueId: issue.id, mode, at })}
             onOpenLog={onOpenLog}
           />
@@ -673,7 +716,7 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
         <div className="lanes">
           <div className="lane-heads">
             {board.states.map((state) => (
-              <section key={state.id} className={colClass(state, `head|${state.id}`, ' lane-colhead')} aria-label={state.name} {...dropEvents(state, `head|${state.id}`)}>
+              <section key={state.id} className={colClass(state, `head|${state.id}`, ' lane-colhead')} style={colStyle(state)} aria-label={state.name} {...dropEvents(state, `head|${state.id}`)}>
                 {head(state, byState.get(state.id) ?? [])}
               </section>
             ))}
@@ -703,7 +746,7 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
                     {board.states.map((state) => {
                       const cell = `${lane.key}|${state.id}`
                       return (
-                        <section key={state.id} className={colClass(state, cell, ' lane-cell')} aria-label={`${state.name}, ${lane.name}`} {...dropEvents(state, cell, lane.key)}>
+                        <section key={state.id} className={colClass(state, cell, ' lane-cell')} style={colStyle(state)} aria-label={`${state.name}, ${lane.name}`} {...dropEvents(state, cell, lane.key)}>
                           {cards(state, lane.byState.get(state.id) ?? [])}
                         </section>
                       )
@@ -721,7 +764,7 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
             // An empty column folds to a narrow strip, still a place to drop cards and drag the column.
             if (!issues.length)
               return (
-                <section key={state.id} className={colClass(state, state.id, ' col-empty')} aria-label={`${state.name}, empty`} {...dropEvents(state, state.id)}>
+                <section key={state.id} className={colClass(state, state.id, ' col-empty')} style={colStyle(state)} aria-label={`${state.name}, empty`} {...dropEvents(state, state.id)}>
                   <div
                     className="colstrip"
                     draggable
@@ -731,21 +774,36 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
                       e.dataTransfer.effectAllowed = 'move'
                     }}
                     onDragEnd={() => setColDrop(null)}
+                    onContextMenu={openColMenu(state.name)}
                   >
                     <StatusIcon state={state} progress={progress.get(state.id)} />
                     <span className="colstrip-name">{state.name}</span>
                     <span className="count">0</span>
+                    {onColumnSettings && (
+                      <button type="button" className="chip-btn col-more strip" aria-label={`${state.name} column settings`} title="Column settings" aria-haspopup="dialog" onClick={openColMenu(state.name)}>
+                        <Icon name="settings" size={14} />
+                      </button>
+                    )}
                   </div>
                 </section>
               )
             return (
-              <section key={state.id} className={colClass(state, state.id)} aria-label={state.name} {...dropEvents(state, state.id)}>
+              <section key={state.id} className={colClass(state, state.id)} style={colStyle(state)} aria-label={state.name} {...dropEvents(state, state.id)}>
                 {head(state, issues)}
                 {cards(state, issues)}
               </section>
             )
           })}
         </div>
+      )}
+      {colMenu && onColumnSettings && (
+        <ColumnMenu
+          name={colMenu.name}
+          value={columnSettings[colMenu.name] ?? {}}
+          at={{ x: colMenu.x, y: colMenu.y }}
+          onChange={(cfg) => onColumnSettings(colMenu.name, cfg)}
+          onClose={() => setColMenu(null)}
+        />
       )}
       {menu && menuIssue && (
         <IssueMenu

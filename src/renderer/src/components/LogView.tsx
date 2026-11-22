@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { isActiveRun, type LinearIssue, type Run, type RunStep, type StepChoice } from '../../../shared/types'
-import Composer from './Composer'
+import Composer, { composerShown } from './Composer'
 import LogText from './LogText'
-import { parseLog, ToolCall, toolTone, type LogEvent } from './LogEvents'
+import { parseLog, TimelineText, TimelineTool, type LogEvent } from './LogEvents'
 import { Icon } from './Icons'
 import { duration, runColor, runLabel, stripAnsi } from '../util'
 import { useWide } from '../useWide'
@@ -13,6 +13,7 @@ interface Props {
   onClose(): void
   onStop(runId: string): void
   onOpenLinear(url: string): void
+  onOpenBoard?(issueId: string): void // show the ticket on the board, with its panel open
   actions: StepChoice[] // the ticket's actions (sets of steps for its current state)
   onAction(setName: string): void
 }
@@ -24,10 +25,11 @@ const TONE: Record<Run['status'], string> = { queued: 'queued', running: 'runnin
 const STEP_LABEL: Record<RunStep['status'], string> = { pending: 'Not started', running: 'Running', waiting: 'Needs you', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
 const STEP_TONE: Record<RunStep['status'], string> = { pending: 'idle', running: 'running', waiting: 'needs', done: 'done', failed: 'failed', skipped: 'idle' }
 
-// The run details view, in the main area beside the sidebar: a step tracker, the log as steps,
-// commands and folded tool calls (or the plain log), the reply box, and a details panel.
+// The run details view, in the main area beside the sidebar: a progress track of the steps, the log as
+// one card per step (quiet script steps share a card; Claude steps get a timeline of tool calls), one bar
+// for the reply box and the log tools, and a details panel (ticket, run facts, tool counts, actions).
 // Loads the whole log file, then appends output as it streams in.
-export default function LogView({ run, issue, onClose, onStop, onOpenLinear, actions, onAction }: Props): JSX.Element {
+export default function LogView({ run, issue, onClose, onStop, onOpenBoard, actions, onAction }: Props): JSX.Element {
   const wide = useWide()
   const [text, setText] = useState<string | null>(null)
   const [follow, setFollow] = useState(true)
@@ -71,19 +73,40 @@ export default function LogView({ run, issue, onClose, onStop, onOpenLinear, act
     if (!el || el === document.body) closeRef.current?.focus()
   }, [run.id])
 
+  // Esc, the keyboard's or mouse's Back button, or Alt+Left goes back to wherever the log was opened from.
   useEffect(() => {
+    // One press can arrive twice (a key or mouse event and an app command); go back once.
+    let last = 0
+    const back = (): void => {
+      if (Date.now() - last < 400) return
+      last = Date.now()
+      onCloseRef.current()
+    }
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
+      const isBack = e.key === 'BrowserBack' || (e.altKey && e.key === 'ArrowLeft')
+      if (e.key !== 'Escape' && !isBack) return
       // Esc in the reply box clears focus instead of leaving the page mid-sentence.
       const t = e.target as HTMLElement | null
-      if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) {
+      if (e.key === 'Escape' && t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) {
         t.blur()
         return
       }
-      onCloseRef.current()
+      e.preventDefault()
+      back()
+    }
+    const onMouse = (e: MouseEvent): void => {
+      if (e.button !== 3) return // the side "back" button
+      e.preventDefault()
+      back()
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('mouseup', onMouse)
+    const offNav = window.nightShift.onNavBack?.(back) // the same press can also come as an app command
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('mouseup', onMouse)
+      offNav?.()
+    }
   }, [])
 
   const tooBig = (text?.length ?? 0) > STRUCTURED_MAX
@@ -159,9 +182,8 @@ export default function LogView({ run, issue, onClose, onStop, onOpenLinear, act
   const toolCounts = useMemo(() => {
     const m = new Map<string, number>()
     for (const e of events) if (e.k === 'tool') m.set(e.tool.startsWith('Subagent') ? 'Subagent' : e.tool, (m.get(e.tool.startsWith('Subagent') ? 'Subagent' : e.tool) ?? 0) + 1)
-    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6)
   }, [events])
-  const toolMax = Math.max(1, ...toolCounts.map(([, n]) => n))
   const showPanel = wide || details
 
   // Claude started · model · mode permissions · Claude Code version
@@ -170,331 +192,395 @@ export default function LogView({ run, issue, onClose, onStop, onOpenLinear, act
   const perms = tagFact(/permissions$/)?.replace(/ permissions$/, '')
   const ccVersion = tagFact(/^Claude Code /)?.replace(/^Claude Code /, '')
 
-  return (
-    <section className="lv" aria-label={`Run details for ${run.identifier}`}>
-      <header className="lv-head">
-        <button ref={closeRef} className="icon-btn bordered lv-back" type="button" onClick={onClose} aria-label="Back" title="Back (Esc)">
-          <Icon name="back" size={16} />
+  // The log split by step divider. Events before the first divider (Night Shift's own header) are dropped:
+  // the header and the details panel say the same.
+  const groups = useMemo(() => {
+    const out: { idx: number | undefined; name: string; detail?: string; events: { e: LogEvent; i: number }[] }[] = []
+    events.forEach((e, i) => {
+      if (e.k === 'step') out.push({ idx: stepAnchor.get(i), name: e.name, detail: e.detail, events: [] })
+      else if (e.k === 'head') return
+      else if (out.length) out[out.length - 1].events.push({ e, i })
+      else out.push({ idx: undefined, name: '', events: [{ e, i }] })
+    })
+    return out
+  }, [events, stepAnchor])
+  type Group = (typeof groups)[number]
+  // A script step that finished (or was skipped) without much to show folds into a quiet row.
+  const quiet = (g: Group): boolean => {
+    const st = g.idx !== undefined ? run.steps[g.idx] : undefined
+    if (!st || st.type === 'claude' || (st.status !== 'done' && st.status !== 'skipped')) return false
+    return !g.events.some(({ e }) => e.k === 'tool' || (e.k === 'text' && e.lines.length > 3))
+  }
+  const [openQuiet, setOpenQuiet] = useState<Set<number>>(new Set())
+  const stepNote = (st: RunStep): string =>
+    st.status === 'skipped' ? 'skipped' : st.startedAt ? duration(st.startedAt, st.endedAt) : st.status === 'pending' ? '' : STEP_LABEL[st.status].toLowerCase()
+  const badge = (status: RunStep['status'], n: number): JSX.Element => (
+    <span className={`rd-badge ${status}`} aria-hidden="true">
+      {status === 'done' ? (
+        <Icon name="check" size={11} width={3} />
+      ) : status === 'skipped' ? (
+        <Icon name="minus" size={11} width={2.6} />
+      ) : status === 'failed' ? (
+        <Icon name="close" size={11} width={3} />
+      ) : (
+        n
+      )}
+    </span>
+  )
+  const command = (e: Extract<LogEvent, { k: 'cmd' }>, key: number): JSX.Element => (
+    <div key={key} className="rd-cmd">
+      <span className="rd-cmd-prompt" aria-hidden="true">
+        $
+      </span>
+      <div className="rd-cmd-body">
+        <code>{e.text}</code>
+        {e.cwd && <span className="rd-cmd-cwd">in {e.cwd}</span>}
+      </div>
+    </div>
+  )
+
+  // Consecutive quiet steps share one card; every other step gets its own.
+  const blocks: ({ kind: 'quiet'; items: Group[] } | { kind: 'step'; g: Group })[] = []
+  for (const g of groups) {
+    const last = blocks[blocks.length - 1]
+    if (quiet(g)) {
+      if (last?.kind === 'quiet') last.items.push(g)
+      else blocks.push({ kind: 'quiet', items: [g] })
+    } else blocks.push({ kind: 'step', g })
+  }
+
+  const logTools = (
+    <>
+      <button type="button" className="rd-tool" aria-pressed={wrap} onClick={() => setWrap((w) => !w)} title="Wrap long lines">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 6h18M3 12h15a3 3 0 0 1 0 6h-4M3 18h7M16 16l-2 2 2 2" />
+        </svg>
+        Wrap
+      </button>
+      {!showPlain && toolIds.length > 0 && (
+        <button type="button" className="rd-tool" onClick={() => setOpen(allOpen ? new Set() : new Set(toolIds))}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {allOpen ? <path d="m7 15 5-5 5 5M7 9l5-5 5 5" /> : <path d="m7 9 5 5 5-5M7 15l5 5 5-5" />}
+          </svg>
+          {allOpen ? 'Collapse all' : 'Expand all'}
         </button>
-        <div className="lv-title">
-          <div className="lv-sub">
-            <span className="mono-path">{run.identifier}</span>
-            <span aria-hidden="true">·</span>
-            <span className="lv-action">
-              <span className="dot" style={{ background: 'var(--accent)' }} aria-hidden="true" />
-              {run.stepsName}
-            </span>
-            {run.startedBy && <span>· by {run.startedBy}</span>}
+      )}
+      <button type="button" className="rd-tool" onClick={() => void copyLog()} disabled={!text} title="Copy the whole log to the clipboard">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="9" y="9" width="12" height="12" rx="2" />
+          <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+        </svg>
+        {copied ?? 'Copy log'}
+      </button>
+      <button
+        type="button"
+        className="rd-tool"
+        aria-pressed={showPlain}
+        disabled={tooBig}
+        onClick={() => setPlain((x) => !x)}
+        title={tooBig ? 'This log is too long for the steps view' : 'Show the log as plain text'}
+      >
+        Plain
+      </button>
+      <button type="button" className={`rd-tool${follow ? '' : ' strong'}`} onClick={() => setFollow(true)} title="Jump to the latest output and keep following it">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M12 5v14M6 13l6 6 6-6" />
+        </svg>
+        Latest
+      </button>
+    </>
+  )
+
+  const facts: [string, string, string][] = [
+    ['Action', `${run.stepsName}${step ? ` · step ${run.currentStep + 1} of ${run.steps.length}` : ''}`, ''],
+    ['Started', run.startedAt ? new Date(run.startedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '', ''],
+    ['Started by', run.startedBy ?? '', ''],
+    ['Model', model ?? '', 'mono-v'],
+    ['Permissions', perms ?? '', ''],
+    ['Claude Code', ccVersion ?? '', ''],
+    ['Branch', run.branch ?? '', 'mono-v'],
+    ['Worktree', run.worktreeMode === 'agent' ? 'Set up by the agent' : run.worktree || 'None', run.worktreeMode === 'agent' || !run.worktree ? '' : 'mono-v'],
+    ['Folder', lastCwd ?? '', 'mono-v']
+  ]
+
+  return (
+    <section className="lv rd" aria-label={`Run details for ${run.identifier}`}>
+      <header className="rd-head">
+        <div className="rd-head-row">
+          <button ref={closeRef} className="rd-back" type="button" onClick={onClose} aria-label="Back" title="Back (Esc or your Back button)">
+            <Icon name="back" size={16} />
+          </button>
+          <div className="rd-title">
+            <div className="rd-crumbs">
+              <span className="mono-path">{run.identifier}</span>
+              <span aria-hidden="true">/</span>
+              <span className="rd-crumb-action">
+                <span className="dot" style={{ background: 'var(--accent)' }} aria-hidden="true" />
+                {run.stepsName}
+              </span>
+              {run.startedBy && <span>· by {run.startedBy}</span>}
+            </div>
+            <h1 title={run.title}>{run.title}</h1>
           </div>
-          <h1 title={run.title}>{run.title}</h1>
+          <span className={`rd-state tone-${TONE[run.status]}`}>
+            <span className="rd-state-dot" aria-hidden="true" />
+            {runLabel[run.status]}
+            {run.startedAt && <span className="rd-state-time">{duration(run.startedAt, run.endedAt)}</span>}
+          </span>
+          {!wide && (
+            <button className="btn" type="button" aria-pressed={details} onClick={() => setDetails((d) => !d)}>
+              Details
+            </button>
+          )}
+          {active && (
+            <button className="btn danger lv-stop" type="button" onClick={() => onStop(run.id)}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+              Stop run
+            </button>
+          )}
         </div>
-        <span className={`lv-state tone-${TONE[run.status]}`}>
-          <span className="dot" style={{ background: runColor[run.status] }} aria-hidden="true" />
-          {runLabel[run.status]}
-          {run.startedAt && <span className="lv-state-time">{duration(run.startedAt, run.endedAt)}</span>}
-        </span>
-        {!wide && (
-          <button className="btn" type="button" aria-pressed={details} onClick={() => setDetails((d) => !d)}>
-            Details
-          </button>
-        )}
-        {issue && (
-          <button className="btn" type="button" onClick={() => onOpenLinear(issue.url)}>
-            Open in Linear
-            <Icon name="external" size={12} width={2.2} />
-          </button>
-        )}
-        {active && (
-          <button className="btn danger lv-stop" type="button" onClick={() => onStop(run.id)}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <rect x="6" y="6" width="12" height="12" rx="2" />
-            </svg>
-            Stop run
-          </button>
+
+        {run.steps.length > 0 && (
+          <ol className="rd-track" aria-label="Steps" style={{ gridTemplateColumns: `repeat(${run.steps.length}, minmax(0, 1fr))` }}>
+            {run.steps.map((st, i) => {
+              const current = i === run.currentStep && active
+              const state: RunStep['status'] = current && st.status === 'pending' ? 'running' : st.status
+              return (
+                <li key={i}>
+                  <button
+                    type="button"
+                    className={`rd-track-step ${state}`}
+                    title={st.command ?? st.name}
+                    aria-current={current ? 'step' : undefined}
+                    disabled={showPlain}
+                    onClick={() => jumpToStep(i)}
+                  >
+                    <span className="rd-track-bar" aria-hidden="true">
+                      <span />
+                    </span>
+                    <span className="rd-track-label">
+                      {badge(state, i + 1)}
+                      <span className="rd-track-name">{st.name}</span>
+                      <span className="rd-track-note">
+                        {stepNote(st)}
+                        <span className="sr-only">, {STEP_LABEL[st.status]}</span>
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+          </ol>
         )}
       </header>
 
-      {run.steps.length > 0 && (
-        <nav className="lv-stepper" aria-label="Steps">
-          <ol>
-            {run.steps.map((s, i) => (
-              <li key={i} className={i < run.steps.length - 1 ? 'grow' : undefined}>
-                <button
-                  type="button"
-                  className={`lv-step ${s.status}${i === run.currentStep && active ? ' current' : ''}`}
-                  title={s.command ?? s.name}
-                  aria-current={i === run.currentStep && active ? 'step' : undefined}
-                  disabled={showPlain}
-                  onClick={() => jumpToStep(i)}
-                >
-                  <span className="lv-step-badge" aria-hidden="true">
-                    {s.status === 'done' ? <Icon name="check" size={12} width={3} /> : s.status === 'skipped' ? <Icon name="minus" size={12} width={2.6} /> : s.status === 'failed' ? <Icon name="close" size={12} width={3} /> : i + 1}
-                  </span>
-                  <span className="lv-step-name">{s.name}</span>
-                  <span className="lv-step-note">
-                    {s.status === 'skipped' ? 'skipped' : s.startedAt ? duration(s.startedAt, s.endedAt) : s.status === 'pending' ? '' : STEP_LABEL[s.status].toLowerCase()}
-                    <span className="sr-only">, {STEP_LABEL[s.status]}</span>
-                  </span>
-                </button>
-                {i < run.steps.length - 1 && <span className={`lv-step-line${s.status === 'done' ? ' done' : ''}`} aria-hidden="true" />}
-              </li>
-            ))}
-          </ol>
-        </nav>
-      )}
-
-      {/* On a laptop the details panel is folded away, so finished runs keep their actions in view here. */}
-      {!wide && !active && issue && actions.length > 0 && (
-        <div className="lv-actions" role="group" aria-label={`Actions for ${issue.identifier}`}>
-          <span className="sec-label">Actions</span>
-          {actions.map((a, i) => (
-            <button key={a.name} className={`btn small${i === 0 ? ' primary' : ''}`} type="button" title={`Run "${a.name}" for ${issue.identifier}`} onClick={() => onAction(a.name)}>
-              {a.label}
-            </button>
-          ))}
-          <span className="note">
-            for {issue.identifier} in {issue.stateName}
-          </span>
-        </div>
-      )}
-
       <div className="lv-main">
         <div className="lv-col">
-          <div ref={logRef} className={`lv-scroll${wrap ? ' wrap' : ''}`} onScroll={onScroll} tabIndex={0} aria-label="Run log" aria-live="off">
-            <div className="lv-inner">
+          <div ref={logRef} className={`rd-scroll${wrap ? ' wrap' : ''}`} onScroll={onScroll} tabIndex={0} aria-label="Run log" aria-live="off">
+            <div className="rd-inner">
               {text === null && <p className="note">Loading log…</p>}
               {text === '' && <p className="note">No output yet.</p>}
+              {run.status === 'queued' && <p className="note">Waiting for a free slot to start.</p>}
               {text && showPlain && (
-                <pre className={`logview-log lv-plain${wrap ? ' wrap' : ''}`}>
+                <pre className={`logview-log lv-plain rd-plain${wrap ? ' wrap' : ''}`}>
                   <LogText text={text} />
                 </pre>
               )}
               {text &&
                 !showPlain &&
-                events.map((e, i) => {
-                  if (e.k === 'head')
+                blocks.map((b, bi) => {
+                  if (b.kind === 'quiet')
                     return (
-                      <div key={i} className="lv-banner">
-                        <span className="brand-tile small" aria-hidden="true">
-                          <Icon name="moon" size={14} />
-                        </span>
-                        <span className="lv-banner-text">Night Shift: {e.text}</span>
-                        {e.sub && <span className="note">{e.sub}</span>}
-                      </div>
+                      <section key={bi} className="rd-card rd-quiet" aria-label="Setup steps">
+                        {b.items.map((g) => {
+                          const idx = g.idx as number
+                          const st = run.steps[idx]
+                          const isOpen = openQuiet.has(idx)
+                          const firstText = g.events.find(({ e }) => e.k === 'text')?.e
+                          const summary = g.detail ?? (firstText?.k === 'text' ? firstText.lines[0] : st.command ?? '')
+                          return (
+                            <div key={idx} className="rd-quiet-step" data-step={idx}>
+                              <button
+                                type="button"
+                                className={`rd-quiet-row ${st.status}`}
+                                aria-expanded={g.events.length ? isOpen : undefined}
+                                disabled={!g.events.length}
+                                onClick={() =>
+                                  setOpenQuiet((prev) => {
+                                    const next = new Set(prev)
+                                    if (next.has(idx)) next.delete(idx)
+                                    else next.add(idx)
+                                    return next
+                                  })
+                                }
+                              >
+                                {badge(st.status, idx + 1)}
+                                <span className="rd-quiet-name">
+                                  {idx + 1}. {st.name}
+                                </span>
+                                <span className="rd-quiet-text">{summary}</span>
+                                <span className={`rd-chip ${st.status}`}>
+                                  {STEP_LABEL[st.status]}
+                                  {st.status === 'done' && st.startedAt ? ` · ${duration(st.startedAt, st.endedAt)}` : ''}
+                                </span>
+                              </button>
+                              {isOpen && (
+                                <div className="rd-quiet-out">
+                                  {g.events.map(({ e, i }) =>
+                                    e.k === 'cmd' ? (
+                                      command(e, i)
+                                    ) : e.k === 'text' ? (
+                                      <pre key={i} className="tl-pre">
+                                        <LogText text={e.lines.join('\n')} />
+                                      </pre>
+                                    ) : null
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </section>
                     )
-                  if (e.k === 'step') {
-                    const idx = stepAnchor.get(i)
-                    const s = idx !== undefined ? run.steps[idx] : undefined
-                    return (
-                      <div key={i} className="lv-divider" data-step={idx}>
-                        <span className="lv-divider-title">
-                          {idx !== undefined ? `${idx + 1} · ` : ''}
-                          {e.name}
-                        </span>
-                        {s && (
-                          <span className={`status-pill ${STEP_TONE[s.status]}`}>
-                            {STEP_LABEL[s.status]}
-                            {s.startedAt ? ` · ${duration(s.startedAt, s.endedAt)}` : ''}
-                          </span>
-                        )}
-                        <span className="lv-divider-line" aria-hidden="true" />
-                        {e.detail && <p className="lv-divider-text">{e.detail}</p>}
-                      </div>
-                    )
-                  }
-                  if (e.k === 'cmd')
-                    return (
-                      <div key={i} className="lv-cmd live-log">
-                        <div className="lv-cmd-text">
-                          <LogText text={`$ ${e.text}`} />
-                        </div>
-                        {e.cwd && <div className="lv-cmd-cwd">in {e.cwd}</div>}
-                      </div>
-                    )
-                  if (e.k === 'claude')
-                    return (
-                      <div key={i} className={`lv-meta${/error/i.test(e.text) ? ' bad' : ''}`}>
-                        <span className="dot" aria-hidden="true" />
-                        <span className="lv-meta-text">{e.text}</span>
-                        {e.tags.map((t) => (
-                          <span key={t} className="lv-tag">
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                    )
-                  if (e.k === 'tool') return <ToolCall key={i} ev={e} open={open.has(e.id)} onToggle={toggle} />
+                  const g = b.g
+                  const st = g.idx !== undefined ? run.steps[g.idx] : undefined
+                  const current = g.idx === run.currentStep && active
+                  const started = g.events.find(({ e }) => e.k === 'claude' && e.text === 'Claude started')?.e
+                  const tags = started?.k === 'claude' ? started.tags : []
+                  const rest = g.events.filter(({ e }) => e.k !== 'cmd' && !(e.k === 'claude' && e.text === 'Claude started'))
+                  const status: RunStep['status'] | undefined = st && current && st.status === 'pending' ? 'running' : st?.status
                   return (
-                    <pre key={i} className="lv-pre lv-text">
-                      <LogText text={e.lines.join('\n')} />
-                    </pre>
+                    <section key={bi} className={`rd-card rd-step${current ? ' current' : ''}${st?.status === 'failed' ? ' failed' : ''}`} data-step={g.idx}>
+                      {st && status && (
+                        <div className="rd-step-head">
+                          {badge(status, (g.idx as number) + 1)}
+                          <h2>{st.name}</h2>
+                          <span className={`rd-chip ${current ? 'running' : st.status}`}>
+                            {current ? runLabel[run.status] : STEP_LABEL[st.status]}
+                            {st.startedAt ? ` · ${duration(st.startedAt, st.endedAt)}` : ''}
+                          </span>
+                          <span className="spacer" />
+                          {tags.map((t) => (
+                            <span key={t} className="rd-tag">
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {g.detail && <p className="rd-step-detail">{g.detail}</p>}
+                      {g.events.some(({ e }) => e.k === 'cmd') && (
+                        <div className="rd-cmds">{g.events.map(({ e, i }) => (e.k === 'cmd' ? command(e, i) : null))}</div>
+                      )}
+                      {(rest.length > 0 || (current && run.status === 'running')) && (
+                        <ol className="tl">
+                          {rest.map(({ e, i }) => {
+                            if (e.k === 'tool') return <TimelineTool key={i} ev={e} open={open.has(e.id)} onToggle={toggle} />
+                            if (e.k === 'text') return <TimelineText key={i} lines={e.lines} />
+                            if (e.k === 'claude') return <TimelineText key={i} lines={[[e.text, ...e.tags].join(' · ')]} meta />
+                            return null
+                          })}
+                          {current && run.status === 'running' && (
+                            <li className="tl-item live" role="status">
+                              <span className="tl-rail" aria-hidden="true">
+                                <span className="tl-live-dot">
+                                  <span />
+                                </span>
+                              </span>
+                              <div className="tl-body tl-live">
+                                <strong>{st?.type === 'claude' ? 'Claude is working' : `Running ${st?.name ?? 'this step'}`}</strong>
+                              </div>
+                            </li>
+                          )}
+                        </ol>
+                      )}
+                    </section>
                   )
                 })}
-              {active && run.status === 'running' && step && (
-                <div className="lv-working" role="status">
-                  <span className="lv-dots" aria-hidden="true">
-                    <span />
-                    <span />
-                    <span />
-                  </span>
-                  {step.type === 'claude' ? `Claude is working on ${step.name}` : `Running ${step.name}`}
-                </div>
-              )}
-              {run.status === 'queued' && <p className="note">Waiting for a free slot to start.</p>}
             </div>
           </div>
 
-          <div className="lv-composer">
-            <div className="lv-composer-inner">
-              <Composer run={run} />
-            </div>
-          </div>
-
-          <div className="lv-tools">
-            <span className="lv-branch" title={run.branch}>
-              <Icon name="branch" size={12} width={2.2} />
-              {run.branch || 'No branch'}
-            </span>
-            <span className="spacer" />
-            <label className="u-check">
-              <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} />
-              Wrap lines
-            </label>
-            <label className="u-check" title={tooBig ? 'This log is too long for the steps view' : undefined}>
-              <input type="checkbox" checked={showPlain} disabled={tooBig} onChange={(e) => setPlain(e.target.checked)} />
-              Plain log
-            </label>
-            <button className="btn small" type="button" onClick={() => void copyLog()} disabled={!text} title="Copy the whole log to the clipboard">
-              {copied ?? 'Copy log'}
-            </button>
-            {!showPlain && toolIds.length > 0 && (
-              <button className="btn small" type="button" onClick={() => setOpen(allOpen ? new Set() : new Set(toolIds))}>
-                {allOpen ? 'Collapse all' : 'Expand all'}
-              </button>
-            )}
-            {!follow && (
-              <button className="btn small dark" type="button" onClick={() => setFollow(true)}>
-                Jump to latest ↓
-              </button>
-            )}
+          {/* The reply box and the log tools share one bar. */}
+          <div className="rd-bar-wrap">
+            <div className="rd-bar">{composerShown(run) ? <Composer run={run} bar leading={logTools} /> : <div className="rd-bar-tools">{logTools}</div>}</div>
           </div>
         </div>
 
         {showPanel && !wide && <button type="button" className="drawer-scrim light" aria-label="Close details" tabIndex={-1} onClick={() => setDetails(false)} />}
         {showPanel && (
-          <aside className={`lv-panel${wide ? '' : ' drawer'}`} aria-label="Run details">
-            <section className="lv-panel-sec" aria-labelledby="lv-run">
-              <h2 id="lv-run" className="sec-label">
+          <aside className={`lv-panel rd-panel${wide ? '' : ' drawer'}`} aria-label="Run details">
+            {!run.global && (
+              <section className="rd-panel-sec" aria-labelledby="rd-ticket">
+                <h2 id="rd-ticket" className="sec-label">
+                  Ticket
+                </h2>
+                <button type="button" className="rd-ticket" disabled={!issue || !onOpenBoard} onClick={() => issue && onOpenBoard?.(issue.id)}>
+                  <span className="rd-ticket-top">
+                    <span className="mono-path">{run.identifier}</span>
+                    {issue && <span className="rd-ticket-state">· {issue.stateName}</span>}
+                  </span>
+                  <span className="rd-ticket-title">{run.title}</span>
+                  {issue && onOpenBoard ? <span className="rd-ticket-go">Open on board →</span> : <span className="note">Not on the board right now.</span>}
+                </button>
+              </section>
+            )}
+
+            <section className="rd-panel-sec" aria-labelledby="rd-run">
+              <h2 id="rd-run" className="sec-label">
                 Run
               </h2>
-              <dl className="rh-facts lv-facts">
-                {!run.global && (
-                  <>
-                    <dt>Ticket</dt>
-                    <dd>
-                      {run.identifier}
-                      {issue ? ` · ${issue.stateName}` : ''}
-                    </dd>
-                  </>
-                )}
-                <dt>Action</dt>
-                <dd>
-                  {run.stepsName}
-                  {step ? ` · step ${run.currentStep + 1} of ${run.steps.length}` : ''}
-                </dd>
-                <dt>Status</dt>
-                <dd>
-                  {runLabel[run.status]}
-                  {run.startedAt ? ` · ${duration(run.startedAt, run.endedAt)}` : ''}
-                </dd>
-                {run.startedAt && (
-                  <>
-                    <dt>Started</dt>
-                    <dd>{new Date(run.startedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</dd>
-                  </>
-                )}
-                {run.startedBy && (
-                  <>
-                    <dt>Started by</dt>
-                    <dd>{run.startedBy}</dd>
-                  </>
-                )}
-                {model && (
-                  <>
-                    <dt>Model</dt>
-                    <dd className="mono-v">{model}</dd>
-                  </>
-                )}
-                {perms && (
-                  <>
-                    <dt>Permissions</dt>
-                    <dd>{perms}</dd>
-                  </>
-                )}
-                {ccVersion && (
-                  <>
-                    <dt>Claude Code</dt>
-                    <dd>{ccVersion}</dd>
-                  </>
-                )}
-                {run.branch && (
-                  <>
-                    <dt>Branch</dt>
-                    <dd className="mono-v">{run.branch}</dd>
-                  </>
-                )}
-                <dt>Worktree</dt>
-                <dd className={run.worktreeMode === 'agent' || !run.worktree ? undefined : 'mono-v'}>
-                  {run.worktreeMode === 'agent' ? 'Set up by the agent' : run.worktree || 'None'}
-                </dd>
-                {lastCwd && (
-                  <>
-                    <dt>Folder</dt>
-                    <dd className="mono-v">{lastCwd}</dd>
-                  </>
-                )}
+              <dl className="rd-facts">
+                {facts
+                  .filter(([, v]) => v)
+                  .map(([k, v, cls]) => (
+                    <div key={k} className="rd-fact">
+                      <dt>{k}</dt>
+                      <dd className={cls || undefined}>{v}</dd>
+                    </div>
+                  ))}
               </dl>
             </section>
 
             {toolCounts.length > 0 && (
-              <section className="lv-panel-sec" aria-labelledby="lv-tools">
-                <h2 id="lv-tools" className="sec-label">
+              <section className="rd-panel-sec" aria-labelledby="rd-tools">
+                <h2 id="rd-tools" className="sec-label">
                   {active ? 'Tool calls so far' : 'Tool calls'}
                 </h2>
-                <ul className="lv-counts">
+                <div className="rd-counts">
                   {toolCounts.map(([name, n]) => (
-                    <li key={name}>
-                      <span className="lv-count-name">{name}</span>
-                      <span className="lv-count-bar" aria-hidden="true">
-                        <span className={toolTone(name)} style={{ width: `${(n / toolMax) * 100}%` }} />
-                      </span>
-                      <span className="lv-count-n">{n}</span>
-                    </li>
+                    <div key={name} className="rd-count">
+                      <span className="rd-count-n">{n}</span>
+                      <span className="rd-count-name">{name}</span>
+                    </div>
                   ))}
-                </ul>
+                </div>
               </section>
             )}
 
-            {issue && actions.length > 0 && (
-              <section className="lv-panel-sec" aria-labelledby="lv-actions">
-                <h2 id="lv-actions" className="sec-label">
-                  Actions
+            {issue && (
+              <section className="rd-panel-sec" aria-labelledby="rd-next">
+                <h2 id="rd-next" className="sec-label">
+                  {active ? 'When this run finishes' : 'Actions'}
                 </h2>
-                <p className="note">{active ? 'Available when this run finishes.' : `For ${issue.identifier} in ${issue.stateName}.`}</p>
-                <div className="row-actions">
-                  {actions.map((a, i) => (
-                    <button
-                      key={a.name}
-                      className={`btn small${i === 0 && !active ? ' primary' : ''}`}
-                      type="button"
-                      disabled={active}
-                      title={`Run "${a.name}" for ${issue.identifier}`}
-                      onClick={() => onAction(a.name)}
-                    >
-                      {a.label}
-                    </button>
-                  ))}
-                </div>
+                {actions.length === 0 ? (
+                  <p className="note">No actions for {issue.stateName}.</p>
+                ) : active ? (
+                  <p className="note">Actions for the ticket&apos;s state show up here once the run is done.</p>
+                ) : (
+                  <>
+                    <p className="note">
+                      For {issue.identifier} in {issue.stateName}.
+                    </p>
+                    <div className="row-actions">
+                      {actions.map((a, i) => (
+                        <button key={a.name} className={`btn small${i === 0 ? ' primary' : ''}`} type="button" title={`Run "${a.name}" for ${issue.identifier}`} onClick={() => onAction(a.name)}>
+                          {a.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
               </section>
             )}
           </aside>

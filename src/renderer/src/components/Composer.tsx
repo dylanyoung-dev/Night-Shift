@@ -5,6 +5,7 @@ interface Props {
   run: Run
   compact?: boolean // the ticket panel's footer
   leading?: ReactNode // other buttons for the same row (the ticket panel's actions), before Send
+  bar?: boolean // the run details view: one bar with the log tools on the left (passed as leading)
 }
 
 // Ended, with a Claude session to resume (and a preload new enough to do it).
@@ -17,7 +18,7 @@ export function composerShown(run: Run): boolean {
 
 // Talk to a running Claude step: send a message, or finish the step so the run carries on.
 // After a run ends, a reply picks its Claude session back up (e.g. answering a planner's questions).
-export default function Composer({ run, compact, leading }: Props): JSX.Element | null {
+export default function Composer({ run, compact, leading, bar }: Props): JSX.Element | null {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -49,7 +50,7 @@ export default function Composer({ run, compact, leading }: Props): JSX.Element 
   }
 
   return (
-    <div className={`composer${waiting ? ' waiting' : ''}${ended ? ' ended' : ''}${compact ? ' compact' : ''}`}>
+    <div className={`composer${waiting ? ' waiting' : ''}${ended ? ' ended' : ''}${compact ? ' compact' : ''}${bar ? ' bar' : ''}`}>
       {waiting && run.waiting && (
         <div className="composer-alert" role="status">
           <strong>Needs you</strong>
@@ -84,7 +85,16 @@ export default function Composer({ run, compact, leading }: Props): JSX.Element 
       {compact && error && <div className="note warn">{error}</div>}
       <div className="composer-actions">
         {leading}
-        {compact ? <span className="spacer" /> : <span className="note">{error ?? 'Enter to send · Shift+Enter for a new line'}</span>}
+        {compact ? (
+          <span className="spacer" />
+        ) : bar ? (
+          <>
+            <span className="spacer" />
+            <span className={`note composer-hint${error ? ' warn' : ''}`}>{error ?? 'Enter to send'}</span>
+          </>
+        ) : (
+          <span className="note">{error ?? 'Enter to send · Shift+Enter for a new line'}</span>
+        )}
         {!ended && (
           <button className="btn" type="button" title="End Claude's session and carry on with the next step" onClick={() => void finish()}>
             Finish step
@@ -98,7 +108,7 @@ export default function Composer({ run, compact, leading }: Props): JSX.Element 
           onClick={() => void send()}
         >
           {ended ? 'Send & continue' : 'Send'}
-          {compact && (
+          {(compact || bar) && (
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M5 12h14M13 6l6 6-6 6" />
             </svg>

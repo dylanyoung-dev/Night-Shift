@@ -51,6 +51,7 @@ const api: NightShiftApi = {
   onLimits: (cb) => listen<[PlanLimits]>('limits', cb),
   usageProgress: () => ipcRenderer.invoke('usage:progress'),
   onOpenRun: (cb) => listen<[string]>('open-run', cb),
+  onNavBack: (cb) => listen<[]>('nav-back', cb),
   getAutomationStatus: () => ipcRenderer.invoke('automations:status'),
   runAutomationNow: (id: string) => ipcRenderer.invoke('automations:runNow', id),
   onAutomationStatus: (cb) => listen<[Record<string, AutomationStatus>]>('automations', cb),

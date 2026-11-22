@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import LogText from './LogText'
 
 // Turns a run log into blocks for the run details view: Night Shift's own header, one divider per
@@ -131,5 +131,97 @@ export const ToolCall = memo(function ToolCall({
         </div>
       )}
     </div>
+  )
+})
+
+// The run details timeline: one row per tool call, with an icon on a rail. The output opens underneath
+// and stays short (the first lines) until "Show all" is pressed.
+const LONG_OUTPUT = 8
+
+function ToolGlyph({ tone }: { tone: string }): JSX.Element {
+  const p = { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }
+  if (tone === 'shell') return <svg {...p}><path d="m5 8 4 4-4 4M12 17h7" /></svg>
+  if (tone === 'file') return <svg {...p}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg>
+  if (tone === 'linear') return <svg {...p}><path d="M4 14 10 20M4 9l11 11M6 5l13 13M11 4l9 9" /></svg>
+  if (tone === 'agent') return <svg {...p}><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" /></svg>
+  if (tone === 'say') return <svg {...p}><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" /></svg>
+  return <svg {...p}><circle cx="12" cy="12" r="3" /></svg>
+}
+
+export const TimelineTool = memo(function TimelineTool({
+  ev,
+  open,
+  onToggle
+}: {
+  ev: Extract<LogEvent, { k: 'tool' }>
+  open: boolean
+  onToggle(id: number): void
+}): JSX.Element {
+  const [all, setAll] = useState(false)
+  const hasOut = ev.out.length > 0
+  const bad = ev.out.some((l) => /^\s*✗/.test(l))
+  const tone = toolTone(ev.tool)
+  const long = ev.out.length > LONG_OUTPUT
+  const shown = long && !all ? ev.out.slice(0, LONG_OUTPUT) : ev.out
+  return (
+    <li className={`tl-item${bad ? ' bad' : ''}`} style={ev.depth ? { marginLeft: ev.depth * 22 } : undefined}>
+      <span className="tl-rail" aria-hidden="true">
+        <span className={`tl-icon ${tone}`}>
+          <ToolGlyph tone={tone} />
+        </span>
+      </span>
+      <div className="tl-body">
+        <button type="button" className="tl-head" aria-expanded={hasOut ? open : undefined} disabled={!hasOut} onClick={() => onToggle(ev.id)}>
+          <span className={`tl-tool ${tone}`}>{ev.tool}</span>
+          <span className="tl-call">{ev.call}</span>
+          {hasOut && (
+            <span className="tl-lines">
+              {ev.out.length === 1 ? '1 line' : `${ev.out.length} lines`}
+              {bad ? ' · error' : ''}
+            </span>
+          )}
+          {hasOut && (
+            <svg className="tl-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m9 6 6 6-6 6" />
+            </svg>
+          )}
+        </button>
+        {open && hasOut && (
+          <div className="tl-out">
+            {ev.call.length > 80 && (
+              <div className="tl-full">
+                <LogText text={ev.call} />
+              </div>
+            )}
+            <pre className="tl-pre">
+              <LogText text={shown.join('\n')} />
+            </pre>
+            {long && (
+              <button type="button" className="tl-grow" onClick={() => setAll((a) => !a)}>
+                {all ? 'Show less' : `Show all ${ev.out.length} lines`}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </li>
+  )
+})
+
+// Claude's own words (and other plain output) in the timeline.
+export const TimelineText = memo(function TimelineText({ lines, meta }: { lines: string[]; meta?: boolean }): JSX.Element {
+  return (
+    <li className={`tl-item${meta ? ' meta' : ''}`}>
+      <span className="tl-rail" aria-hidden="true">
+        <span className={`tl-icon ${meta ? 'other' : 'say'}`}>
+          <ToolGlyph tone={meta ? 'other' : 'say'} />
+        </span>
+      </span>
+      <div className="tl-body">
+        <pre className="tl-text">
+          <LogText text={lines.join('\n')} />
+        </pre>
+      </div>
+    </li>
   )
 })

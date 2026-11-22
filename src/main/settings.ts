@@ -2,7 +2,7 @@ import { app, safeStorage } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import { DEFAULT_HOST_PORT, DEFAULT_WORKTREE_PATH, type Automation, type HostSettings, type NightShiftProject, type Settings, type SettingsUpdate } from '../shared/types'
+import { DEFAULT_HOST_PORT, DEFAULT_WORKTREE_PATH, type Automation, type ColumnSettings, type HostSettings, type NightShiftProject, type Settings, type SettingsUpdate } from '../shared/types'
 
 interface Stored extends Omit<Settings, 'hasLinearKey' | 'hasGithubToken'> {
   linearApiKeyEnc?: string // encrypted with the OS keychain (safeStorage), base64
@@ -21,6 +21,7 @@ const defaults: Stored = {
   maxConcurrent: 3,
   hiddenStateTypes: ['backlog', 'completed', 'canceled'],
   columnOrder: [],
+  columns: {},
   projects: [],
   activeProjectId: null,
   automations: [],
@@ -187,6 +188,20 @@ function cleanHost(raw: unknown): HostSettings {
   }
 }
 
+// Keeps well-formed column settings only, and drops columns left with nothing set.
+function cleanColumns(raw: unknown): Record<string, ColumnSettings> {
+  const out: Record<string, ColumnSettings> = {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out
+  for (const [name, v] of Object.entries(raw as Record<string, Partial<ColumnSettings>>)) {
+    if (!name || !v || typeof v !== 'object') continue
+    const c: ColumnSettings = {}
+    if (typeof v.color === 'string' && /^#[0-9a-f]{6}$/i.test(v.color)) c.color = v.color.toLowerCase()
+    if (v.muted === true) c.muted = true
+    if (Object.keys(c).length) out[name.slice(0, 100)] = c
+  }
+  return out
+}
+
 export function updateSettings(update: SettingsUpdate): Settings {
   const s = { ...load() }
   const { linearApiKey, githubToken, ...rest } = update
@@ -209,6 +224,7 @@ export function updateSettings(update: SettingsUpdate): Settings {
   delete (s as Partial<Settings>).sharedRevs
   delete (s as Partial<Settings>).saveError
   s.columnOrder = Array.isArray(s.columnOrder) ? [...new Set(s.columnOrder.map(String).filter(Boolean))] : []
+  s.columns = cleanColumns(s.columns)
   if (linearApiKey !== undefined) {
     delete s.linearApiKeyEnc
     delete s.linearApiKeyPlain

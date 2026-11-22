@@ -125,7 +125,7 @@ export default function RunDetails({ issue, run, history, log, sets, onStart, on
             <div className="sec-label">Runs</div>
             <ul className="run-list">
               {runs.map((r, i) => (
-                <li key={r.id} className="run-row">
+                <li key={r.id} className="run-li">
                   <button type="button" className={`run-item${i === 0 ? ' latest' : ''}`} title={`Open the log of ${r.stepsName} (${runLabel[r.status]})`} onClick={() => onOpenLog(r.id)}>
                     <span className="dot" style={{ background: runColor[r.status] }} aria-hidden="true" />
                     <span className="run-item-name">

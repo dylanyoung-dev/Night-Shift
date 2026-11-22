@@ -16,6 +16,7 @@ interface Props extends RunDetailsProps {
   wide: boolean // docked beside the board; otherwise a drawer over it
   tabRequest: { tab: PanelTab; at: number } | null // set from the card menu ("Glimpse in Linear", "View spec")
   onOpenLinear(url: string): void
+  onShowIssue?(identifier: string): boolean // select another ticket on the board; false when it isn't there
   onClose(): void
 }
 
@@ -212,7 +213,7 @@ export default function TicketPanel(props: Props): JSX.Element {
         <div className="glimpse-body" role="tabpanel">
           {error && <div className="note warn">{d ? `Couldn't refresh from Linear: ${error}` : error}</div>}
           {!d && !error && <div className="empty">Loading {issue.identifier} from Linear…</div>}
-          {d && tab === 'ticket' && <TicketDetails d={d} onOpen={onOpenLinear} onOpenDoc={setTab} />}
+          {d && tab === 'ticket' && <TicketDetails d={d} onOpen={onOpenLinear} onShow={props.onShowIssue} onOpenDoc={setTab} />}
           {d && tab !== 'ticket' && (
             <article className="glimpse-doc">
               {doc ? (
@@ -235,8 +236,10 @@ export default function TicketPanel(props: Props): JSX.Element {
   )
 }
 
-function TicketDetails({ d, onOpen, onOpenDoc }: { d: IssueDetail; onOpen(url: string): void; onOpenDoc(id: string): void }): JSX.Element {
+function TicketDetails({ d, onOpen, onShow, onOpenDoc }: { d: IssueDetail; onOpen(url: string): void; onShow?(identifier: string): boolean; onOpenDoc(id: string): void }): JSX.Element {
   const openUrl = (url: string) => () => onOpen(url)
+  // A ticket on the board opens here; only one that isn't (done, hidden, filtered out) opens in Linear.
+  const showTicket = (identifier: string, url: string) => () => onShow?.(identifier) || onOpen(url)
   const docs = d.documents ?? []
   const roots = d.comments.filter((c) => !c.parentId || !d.comments.some((p) => p.id === c.parentId))
   const replies = (id: string): IssueComment[] => d.comments.filter((c) => c.parentId === id)
@@ -253,7 +256,7 @@ function TicketDetails({ d, onOpen, onOpenDoc }: { d: IssueDetail; onOpen(url: s
             <ul className="glimpse-list">
               {d.children.map((c) => (
                 <li key={c.identifier}>
-                  <button type="button" onClick={openUrl(c.url)}>
+                  <button type="button" onClick={showTicket(c.identifier, c.url)}>
                     <StatusIcon state={stateOf(c.state)} />
                     <span className="mono">{c.identifier}</span>
                     <span className="t">{c.title}</span>
