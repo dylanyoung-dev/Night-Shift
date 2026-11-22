@@ -34,10 +34,12 @@ export default function PrChip({ pr, onOpen }: { pr: LinearPullRequest; onOpen(e
   const { status, error } = usePrStatus(pr.url)
   const failed = !status && !!error && pr.status !== 'merged' && pr.status !== 'closed'
   const problem = status ? prProblem(status) : null
+  // Nothing holding it up and checks green: say so in green.
+  const good = !!status && !problem && status.state === 'open' && status.checks.state === 'success'
   return (
     <button
       type="button"
-      className={`prop link pr-chip${problem ? ` ${problem.tone}` : ''}`}
+      className={`prop link pr-chip${problem ? ` ${problem.tone}` : good ? ' good' : status?.state === 'merged' ? ' merged' : ''}`}
       title={`${status ? prSummary(status) : failed ? `Couldn't get checks: ${error}` : `Pull request #${pr.number} (${pr.status})`} · open on GitHub`}
       onClick={onOpen}
     >

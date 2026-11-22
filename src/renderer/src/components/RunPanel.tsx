@@ -26,6 +26,39 @@ function ago(t: number): string {
 
 const lastPart = (path: string): string => path.split(/[\\/]/).filter(Boolean).pop() ?? path
 
+// The (i) on a run row: its steps, grouped, with how long each took. Shown on hover or focus.
+function StepsInfo({ run }: { run: Run }): JSX.Element {
+  const id = `steps-${run.id}`
+  return (
+    <span className="steps-info">
+      <button type="button" className="steps-info-btn" aria-label={`Steps of ${run.stepsName}`} aria-describedby={id}>
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+          <path d="M8 7.2v3.8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <circle cx="8" cy="5" r=".9" fill="currentColor" />
+        </svg>
+      </button>
+      <div className="steps-pop" role="tooltip" id={id}>
+        {groupSteps(run.steps).map((g) => (
+          <div key={g.label} className="steps-pop-group">
+            <div className="sec-label">{g.label}</div>
+            {g.items.map(({ step: s, index }) => (
+              <div key={index} className={`steps-pop-step ${s.status}`}>
+                <span className="dot" style={{ background: stepColor[s.status] }} aria-hidden="true" />
+                <span className="steps-pop-body">
+                  <span className="step-name">{s.name}</span>
+                  {s.command && <span className="steps-pop-cmd">{s.command}</span>}
+                </span>
+                <span className="steps-pop-time">{duration(s.startedAt, s.endedAt)}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </span>
+  )
+}
+
 // The Run tab of the ticket panel: facts about the latest run, every run on the ticket, the steps,
 // the live log, and a footer with the reply box and the actions that can be started for the ticket's state.
 export default function RunDetails({ issue, run, history, log, sets, onStart, onStop, onOpenLog }: RunDetailsProps): JSX.Element {
@@ -92,50 +125,36 @@ export default function RunDetails({ issue, run, history, log, sets, onStart, on
             <div className="sec-label">Runs</div>
             <ul className="run-list">
               {runs.map((r, i) => (
-                <li key={r.id}>
+                <li key={r.id} className="run-row">
                   <button type="button" className={`run-item${i === 0 ? ' latest' : ''}`} title={`Open the log of ${r.stepsName} (${runLabel[r.status]})`} onClick={() => onOpenLog(r.id)}>
                     <span className="dot" style={{ background: runColor[r.status] }} aria-hidden="true" />
                     <span className="run-item-name">
                       {r.stepsName}
                       {r.status !== 'done' && <span className="run-item-state"> · {runLabel[r.status]}</span>}
+                      {r.currentStep >= 0 && isActiveRun(r.status) && r.steps[r.currentStep] && (
+                        <span className="run-item-state">
+                          {' '}
+                          · {r.steps[r.currentStep].name} {r.currentStep + 1}/{r.steps.length}
+                        </span>
+                      )}
                     </span>
                     <span className="run-item-dur">{r.startedAt ? duration(r.startedAt, r.endedAt) : ''}</span>
                     <span className="run-item-ago">{i === 0 && isActiveRun(r.status) ? 'now' : ago(r.endedAt ?? r.startedAt ?? r.createdAt)}</span>
+                    <svg className="run-item-go" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="m9 6 6 6-6 6" />
+                    </svg>
                   </button>
+                  {r.steps.length > 0 && <StepsInfo run={r} />}
                 </li>
               ))}
             </ul>
           </section>
         )}
 
-        {run &&
-          groupSteps(run.steps).map((g) => (
-            <section key={g.label} className="run-sec" aria-label={g.label}>
-              <div className="sec-label">{g.label}</div>
-              <ul className="step-list">
-                {g.items.map(({ step: s, index }) => (
-                  <li key={index} className={`step ${s.status}`}>
-                    <span className="dot" style={{ background: stepColor[s.status] }} aria-hidden="true" />
-                    <span className="body">
-                      <span className="step-name">{s.name}</span>
-                      {s.command && <span className="step-cmd">{s.command}</span>}
-                      {s.type === 'claude' && run.worktree && <span className="mono">cwd {run.worktree}</span>}
-                    </span>
-                    <span className="time">{duration(s.startedAt, s.endedAt)}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-
         {run && (
           <section className="run-sec live" aria-label="Live log">
             <div className="sec-row">
               <div className="sec-label">Live log</div>
-              <span className="spacer" />
-              <button type="button" className="link-btn" onClick={() => onOpenLog(run.id)}>
-                Open full log
-              </button>
             </div>
             <pre className="log live-log" ref={logRef} tabIndex={0} aria-label="Live log output">
               {stripAnsi(log) ? <LogText text={stripAnsi(log)} /> : 'No output yet.'}

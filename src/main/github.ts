@@ -250,3 +250,36 @@ export async function mergePr(token: string | null, url: string): Promise<void> 
     await api(token, 'DELETE', `${repo}/git/refs/heads/${head.ref.split('/').map(encodeURIComponent).join('/')}`).catch(() => undefined)
   }
 }
+
+// Cancels the GitHub Actions workflow runs still going (or queued) on the pull request's latest commit.
+// Checks from other apps (Vercel and the like, reported as commit statuses) can't be stopped from here.
+// Needs the token's Actions permission set to Read and write.
+export async function cancelPrChecks(token: string | null, url: string): Promise<{ cancelled: number; other: number }> {
+  const m = PR_URL.exec(url)
+  if (!m) throw new Error('Not a GitHub pull request link.')
+  const [, owner, name, number] = m
+  const repo = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`
+  const pr = (await api(token, 'GET', `${repo}/pulls/${number}`)) as { head?: { sha?: string } }
+  const sha = pr.head?.sha
+  if (!sha) throw new Error("Couldn't find the pull request's latest commit.")
+  const wf = (await api(token, 'GET', `${repo}/actions/runs?head_sha=${sha}&per_page=100`)) as { workflow_runs?: { id: number; status: string }[] }
+  const going = (wf.workflow_runs ?? []).filter((r) => r.status !== 'completed')
+  let cancelled = 0
+  let firstError: string | null = null
+  for (const run of going) {
+    try {
+      await api(token, 'POST', `${repo}/actions/runs/${run.id}/cancel`)
+      cancelled++
+    } catch (err) {
+      firstError ??= (err as Error).message
+    }
+  }
+  if (going.length && !cancelled && firstError) {
+    throw new Error(/not accessible|forbidden|403/i.test(firstError) ? "GitHub won't let this token cancel runs. Give it Actions: Read and write in Settings › GitHub." : firstError)
+  }
+  // Statuses still pending after this come from other apps.
+  const st = (await api(token, 'GET', `${repo}/commits/${sha}/status`).catch(() => null)) as { statuses?: { state: string }[] } | null
+  const other = (st?.statuses ?? []).filter((s) => s.state === 'pending').length
+  cache.delete(url)
+  return { cancelled, other }
+}

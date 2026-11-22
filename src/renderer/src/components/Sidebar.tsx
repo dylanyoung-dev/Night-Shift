@@ -80,7 +80,8 @@ export default function Sidebar({
       <nav className="sidebar rail" aria-label="Main">
         <Brand wide={false} />
         {items.map((it) => {
-          const badge = it.id === 'agents' && needsYou > 0
+          // Running agents: a count, amber when some need you, blue while agents are going.
+          const badge = it.id === 'agents' ? (needsYou > 0 ? { n: needsYou, tone: 'needs' } : running > 0 ? { n: running, tone: 'running' } : null) : null
           const label = it.id === 'agents' && needsYou > 0 ? `${it.label}, ${needsYou} need you` : it.id === 'agents' && running > 0 ? `${it.label}, ${running} going` : it.label
           return (
             <button
@@ -93,7 +94,11 @@ export default function Sidebar({
               onClick={() => onView(it.id)}
             >
               <Icon name={it.icon} size={18} />
-              {badge && <span className="rail-badge" aria-hidden="true" />}
+              {badge && (
+                <span className={`rail-badge ${badge.tone}`} aria-hidden="true">
+                  {badge.n}
+                </span>
+              )}
             </button>
           )
         })}
@@ -163,7 +168,7 @@ export default function Sidebar({
           <Icon name={it.icon} />
           <span className="nav-label">{it.label}</span>
           {it.id === 'agents' && needsYou > 0 && <span className="nav-badge">{needsYou} need{needsYou === 1 ? 's' : ''} you</span>}
-          {it.id === 'agents' && running > 0 && needsYou === 0 && <span className="count">{running}</span>}
+          {it.id === 'agents' && running > 0 && needsYou === 0 && <span className="nav-badge running">{running}</span>}
         </button>
       ))}
       {teamKey && (

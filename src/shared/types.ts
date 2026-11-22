@@ -589,6 +589,7 @@ export interface NightShiftApi {
   getIssueRelations?(issueId: string): Promise<IssueRelation[] | { error: string }>
   getPrStatuses?(urls: string[], refresh?: boolean): Promise<{ statuses: Record<string, PrStatus>; error?: string }>
   mergePr?(url: string): Promise<{ ok: true } | { error: string }> // merge with the repo's method and delete the remote branch
+  cancelPrChecks?(url: string): Promise<{ ok: true; cancelled: number; other: number } | { error: string }> // cancel the PR's running GitHub Actions runs
   linearImage?(url: string): Promise<string | null> // data: URL for an image uploaded to Linear
   getUsage?(days: number, refresh?: boolean): Promise<UsageReport>
   getTicketStats?(days: number): Promise<TicketStats>

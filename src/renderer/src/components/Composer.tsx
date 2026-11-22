@@ -91,7 +91,7 @@ export default function Composer({ run, compact, leading }: Props): JSX.Element 
           </button>
         )}
         <button
-          className={`btn ${compact ? 'dark' : 'primary'}`}
+          className="btn primary"
           type="button"
           disabled={!text.trim() || sending}
           title={ended ? 'Resume the Claude session with your reply. It runs as a new step on this run.' : undefined}

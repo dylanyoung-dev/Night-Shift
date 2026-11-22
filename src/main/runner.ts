@@ -462,7 +462,7 @@ export class Runner {
       // When Claude ends a turn: wait for the person if it needs them, otherwise end the session.
       const onResult = (ev: Record<string, any>): void => {
         if (!session || !a.stdin || a.stdin.destroyed || a.stopRequested) return
-        const reason = needsYou(ev, fmt?.hookBlocked)
+        const reason = needsYou(ev, fmt ? new Set([...fmt.hookBlocked, ...fmt.autoRefused]) : undefined)
         if (!reason) {
           a.stdin.end()
           return

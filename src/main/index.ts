@@ -9,9 +9,9 @@ import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetch
 import { globalSet, loadSteps, parseSteps, saveSteps, setForState, setsForState, starterSteps, stringifySteps, STEPS_RELATIVE_PATH } from './steps'
 import { Runner, resolveWorktreePath } from './runner'
 import { cleanupWorktrees } from './worktreeCleanup'
-import { fetchPrStatuses, mergePr } from './github'
+import { fetchPrStatuses, mergePr, cancelPrChecks } from './github'
 import { getUsage, usageProgress } from './usage'
-import { getTicketStats } from './ticketStats'
+import { cachedTicketStats, refreshTicketStats, TICKET_STATS_EVERY } from './ticketStats'
 import { checkLimits, getLimits, loadLimits, onLimitsChange } from './limits'
 import { installUpdateNow, checkForUpdatesNow, startUpdater, updateState } from './updater'
 import { log } from './log'
@@ -354,15 +354,14 @@ function usageHere(days: number, refresh: boolean): ReturnType<typeof getUsage> 
   return getUsage(Math.min(365, Math.max(1, Math.round(Number(days) || 30))), sessions, refresh)
 }
 
-function ticketStatsHere(days: number, projectId: string | null): ReturnType<typeof getTicketStats> {
+function ticketCtx(projectId: string | null): Parameters<typeof cachedTicketStats>[2] {
   const s = getSettings()
   const project = s.projects.find((p) => p.id === projectId) ?? null
-  return getTicketStats(Math.min(365, Math.max(1, Math.round(Number(days) || 30))), {
-    apiKey: getLinearKey() ?? '',
-    teamKey: s.linearTeamKey,
-    projectIds: project?.linearProjectIds,
-    runs: runner.list()
-  })
+  return { apiKey: getLinearKey() ?? '', teamKey: s.linearTeamKey, projectIds: project?.linearProjectIds, runs: runner.list() }
+}
+
+function ticketStatsHere(days: number, projectId: string | null): ReturnType<typeof cachedTicketStats> {
+  return cachedTicketStats(Math.min(365, Math.max(1, Math.round(Number(days) || 30))), projectId, ticketCtx(projectId))
 }
 
 // The whole log file; the window shows the last 4 MB of a bigger one.
@@ -811,6 +810,16 @@ function registerIpc(): void {
       return { statuses: {}, error: (err as Error).message }
     }
   })
+  ipcMain.handle('github:cancelChecks', async (_e, url: unknown) => {
+    if (typeof url !== 'string' || !boardPrs().has(url)) return { error: 'That pull request is not linked to a ticket on the board.' }
+    try {
+      const r = await cancelPrChecks(getGithubToken(), url)
+      log.info(`cancelled ${r.cancelled} workflow runs on ${url}`)
+      return { ok: true, ...r }
+    } catch (err) {
+      return { error: (err as Error).message }
+    }
+  })
   ipcMain.handle('github:merge', async (_e, url: unknown) => {
     if (typeof url !== 'string' || !boardPrs().has(url)) return { error: 'That pull request is not linked to a ticket on the board.' }
     try {
@@ -966,6 +975,8 @@ app.whenReady().then(async () => {
   schedulePolling()
   // Schedules are checked every 30s; watch automations also check after each Linear sync.
   setInterval(tickAutomations, 30_000)
+  // The usage page's ticket numbers are kept current in the background.
+  setInterval(() => refreshTicketStats(ticketCtx), TICKET_STATS_EVERY)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

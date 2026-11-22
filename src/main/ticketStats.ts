@@ -1,3 +1,6 @@
+import { app } from 'electron'
+import { readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { join } from 'path'
 import type { Run, TicketBucket, TicketDone, TicketStats } from '../shared/types'
 import { fetchCompleted } from './linear'
 import { sessionTotals } from './usage'
@@ -145,4 +148,89 @@ export async function getTicketStats(
     avgAgentMs: avg((t) => t.agentMs),
     tokensPerPoint: points ? agented.reduce((s, t) => s + t.tokens, 0) / points : null
   }
+}
+
+// The usage page's ticket numbers, kept on disk and rebuilt in the background, so opening the page
+// doesn't query Linear and read every session log each time. One entry per range and project.
+export const TICKET_STATS_EVERY = 15 * 60_000
+type Ctx = Parameters<typeof getTicketStats>[1]
+interface Entry {
+  stats: TicketStats
+  lastAsked: number
+}
+let store: Record<string, Entry> | null = null
+const building = new Map<string, Promise<TicketStats>>()
+const storeFile = (): string => {
+  const dir = app.getPath('userData')
+  mkdirSync(dir, { recursive: true })
+  return join(dir, 'ticket-stats.json')
+}
+function loadStore(): Record<string, Entry> {
+  if (store) return store
+  try {
+    store = JSON.parse(readFileSync(storeFile(), 'utf8')) as Record<string, Entry>
+  } catch {
+    store = {}
+  }
+  return store
+}
+function saveStore(): void {
+  try {
+    writeFileSync(storeFile(), JSON.stringify(store ?? {}))
+  } catch {
+    // the numbers are rebuilt anyway; a failed save only costs a slower first load
+  }
+}
+
+function rebuild(key: string, days: number, ctx: Ctx): Promise<TicketStats> {
+  const running = building.get(key)
+  if (running) return running
+  const job = getTicketStats(days, ctx)
+    .then((fresh) => {
+      const all = loadStore()
+      const old = all[key]
+      // A failed rebuild keeps the last good numbers and says why they're old.
+      const stats = fresh.error && old && !old.stats.error ? { ...old.stats, error: fresh.error } : fresh
+      all[key] = { stats, lastAsked: old?.lastAsked ?? Date.now() }
+      saveStore()
+      return stats
+    })
+    .finally(() => building.delete(key))
+  building.set(key, job)
+  return job
+}
+
+// Returns the saved numbers straight away (rebuilding them in the background when they're old),
+// or builds them the first time.
+export async function cachedTicketStats(days: number, projectId: string | null, ctx: Ctx): Promise<TicketStats> {
+  const key = `${days}|${projectId ?? ''}`
+  const all = loadStore()
+  const hit = all[key]
+  if (!hit) {
+    all[key] = { stats: await rebuild(key, days, ctx), lastAsked: Date.now() }
+    saveStore()
+    return all[key].stats
+  }
+  hit.lastAsked = Date.now()
+  if (Date.now() - hit.stats.generatedAt >= TICKET_STATS_EVERY || hit.stats.error) void rebuild(key, days, ctx).catch(() => undefined)
+  return hit.stats
+}
+
+// Called on a timer: rebuilds the ranges looked at in the last week so they're current when the page
+// opens, and forgets the rest.
+export function refreshTicketStats(ctxFor: (projectId: string | null) => Ctx): void {
+  const all = loadStore()
+  const weekAgo = Date.now() - 7 * 86_400_000
+  let dropped = false
+  for (const [key, e] of Object.entries(all)) {
+    if (e.lastAsked < weekAgo) {
+      delete all[key]
+      dropped = true
+      continue
+    }
+    if (Date.now() - e.stats.generatedAt < TICKET_STATS_EVERY - 60_000) continue
+    const [d, p] = key.split('|')
+    void rebuild(key, Number(d) || 30, ctxFor(p || null)).catch(() => undefined)
+  }
+  if (dropped) saveStore()
 }

@@ -44,6 +44,7 @@ const api: NightShiftApi = {
   getIssueRelations: (issueId: string) => ipcRenderer.invoke('issue:relations', issueId),
   getPrStatuses: (urls: string[], refresh?: boolean) => ipcRenderer.invoke('github:prs', urls, refresh),
   mergePr: (url: string) => ipcRenderer.invoke('github:merge', url),
+  cancelPrChecks: (url: string) => ipcRenderer.invoke('github:cancelChecks', url),
   linearImage: (url: string) => ipcRenderer.invoke('linear:image', url),
   getLimits: () => ipcRenderer.invoke('limits:get'),
   checkLimits: () => ipcRenderer.invoke('limits:check'),

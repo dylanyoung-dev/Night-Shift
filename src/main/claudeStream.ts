@@ -7,6 +7,9 @@ const MAX_OUTPUT_LINES = 40
 const MAX_LINE = 400
 // A tool result that came from a repo hook refusing the call, not from a missing permission.
 const HOOK_BLOCK = /\bhook (error|blocked)\b|^Blocked:/i
+// Claude Code's own auto mode checks (the classifier, built-in safety checks). They refuse a call outright and
+// tell Claude why; there's nothing for the person to approve, so like hook blocks they don't pause the run.
+const AUTO_REFUSED = /auto mode classifier|built-in Claude Code safety check/i
 
 type Json = Record<string, any>
 
@@ -154,6 +157,7 @@ export class ClaudeStreamFormatter {
   }
   private progressSeen = new Set<string>()
   readonly hookBlocked = new Set<string>() // tool calls a repo hook refused
+  readonly autoRefused = new Set<string>() // tool calls auto mode refused
 
   private line(raw: string): string {
     const trimmed = raw.trim()
@@ -203,6 +207,7 @@ export class ClaudeStreamFormatter {
           // A repo hook refused the call (e.g. a branch guard). Claude Code reports these as permission
           // denials too, but no flag fixes them; Claude reads the reason and adjusts.
           if (part.is_error === true && HOOK_BLOCK.test(textOf(part.content))) this.hookBlocked.add(String(part.tool_use_id))
+          else if (part.is_error === true && AUTO_REFUSED.test(textOf(part.content))) this.autoRefused.add(String(part.tool_use_id))
           out += this.output(call, part.content, part.is_error === true, callPad)
           if (call && part.is_error !== true && LINEAR_WRITE.test(call.name)) {
             if (call.ticket) this.onLinearWrite?.(call.ticket)
@@ -218,8 +223,10 @@ export class ClaudeStreamFormatter {
         let out = `\n● Claude ${ev.is_error ? `stopped with an error (${ev.subtype ?? 'error'})` : 'finished its turn'}${[turns, secs, cost].filter(Boolean).length ? ` · ${[turns, secs, cost].filter(Boolean).join(' · ')}` : ''}\n`
         const all = Array.isArray(ev.permission_denials) ? (ev.permission_denials as Json[]) : []
         const byHook = all.filter((d) => this.hookBlocked.has(String(d.tool_use_id)))
-        const denials = all.filter((d) => !this.hookBlocked.has(String(d.tool_use_id)))
+        const byAuto = all.filter((d) => this.autoRefused.has(String(d.tool_use_id)))
+        const denials = all.filter((d) => !this.hookBlocked.has(String(d.tool_use_id)) && !this.autoRefused.has(String(d.tool_use_id)))
         if (byHook.length) out += `  ⛔ The repo's hooks blocked ${byHook.length} ${byHook.length === 1 ? 'call' : 'calls'}. Claude was told why (see ✗ above).\n`
+        if (byAuto.length) out += `  ⛔ Auto mode refused ${byAuto.length} ${byAuto.length === 1 ? 'call' : 'calls'} as risky. Claude was told why and carried on (see ✗ above).\n`
         if (denials.length) {
           const names = [...new Set(denials.map((d) => toolLabel(String(d.tool_name ?? d.tool ?? 'unknown'))))]
           out += `  ✗ Permission denied ${denials.length}× for: ${names.join(', ')}\n`
@@ -259,7 +266,7 @@ const ASKS_YOU =
   /\b(should I|shall I|do you want|would you like|let me know|please (confirm|approve|provide|choose|decide|reply|advise)|can you (confirm|provide|check|clarify)|could you|need(s)? (you|your|input|approval|a decision|confirmation)|waiting (for|on) you|your call|which (one|option|approach) (do|would|should)|before I (proceed|continue|go ahead)|how would you like)\b/i
 
 // After Claude ends a turn: a reason if it needs the person, null if the step is done.
-// hookBlocked: calls a repo hook refused. Those aren't yours to approve, so they don't pause the run.
+// hookBlocked: calls a repo hook or auto mode refused. Those aren't yours to approve, so they don't pause the run.
 export function needsYou(result: Record<string, any>, hookBlocked?: Set<string>): string | null {
   const denials = (Array.isArray(result.permission_denials) ? (result.permission_denials as Record<string, any>[]) : []).filter(
     (d) => !hookBlocked?.has(String(d.tool_use_id))

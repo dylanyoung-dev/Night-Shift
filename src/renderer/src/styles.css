@@ -1904,3 +1904,128 @@ button.prop:disabled:hover { background: var(--tag-bg); color: var(--tag); }
 
 /* PR chip when GitHub couldn't be asked (no token access): a muted ? with the reason in the tooltip */
 .pr-chip .pr-unknown { color: var(--warn-text); }
+
+/* "Updated 3:15 PM" beside a section label */
+.sec-label-note { margin-left: 10px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--muted); opacity: .8; }
+
+/* Going now: one card per active run, in a grid */
+.rh-live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.rh-live { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 10px; min-width: 0; }
+.rh-live-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rh-live-title { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rh-live-title:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; border-radius: 4px; }
+.rh-live-name { font-size: 14px; font-weight: 600; line-height: 1.35; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rh-live-title:hover .rh-live-name { text-decoration: underline; }
+.rh-live-meta { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.rh-live-steps { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.rh-live-steps .note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rh-steps-bar { display: flex; gap: 3px; }
+.rh-seg { flex: 1; height: 5px; border-radius: 3px; background: var(--line); }
+.rh-seg.done, .rh-seg.skipped { background: var(--done); }
+.rh-seg.failed { background: var(--failed); }
+.rh-seg.now { background: var(--running); }
+.rh-live.tone-needs .rh-seg.now { background: var(--attn); }
+.rh-live-foot { display: flex; justify-content: flex-end; margin-top: auto; }
+.rh-live .rh-reason { flex-basis: auto; }
+
+/* The page area. A log opens over the page instead of replacing it, so Back finds the page as it was. */
+.app-stage { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; position: relative; }
+.app-view { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; position: relative; }
+.app-view.covered { visibility: hidden; }
+.lv-overlay { position: absolute; inset: 0; z-index: 40; display: flex; background: var(--bg); }
+
+/* Ticket panel: the top row only holds the ticket ID and status (the window buttons sit to its right);
+   tabs and the panel's own buttons get a second row, like the board's filter bar. */
+.panel-toolbar { flex: none; display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 12px 0 20px; background: var(--surface); border-bottom: 1px solid var(--line-soft); min-width: 0; }
+.panel-toolbar .glimpse-tabs { align-self: stretch; display: flex; align-items: stretch; gap: 2px; margin: 0; padding: 0; border: 0; overflow-x: auto; min-width: 0; }
+.panel-toolbar .glimpse-tabs button { height: auto; padding: 0 10px; margin: 0; border-bottom: 2px solid transparent; }
+.panel-toolbar .glimpse-tabs button.on { border-bottom-color: var(--accent); }
+.panel-toolbar .btn.small.open-linear { height: 30px; padding: 0 10px; gap: 6px; font-weight: 500; }
+.panel-toolbar .icon-btn, .panel-toolbar .btn { flex: none; }
+.panel-titleblock { padding-bottom: 2px; }
+
+/* Run tab: the runs list and the live log first; the log takes the rest of the height. */
+.run-list { overflow: visible; }
+.run-list li:first-child .run-item { border-radius: 9px 9px 0 0; }
+.run-list li:last-child .run-item { border-radius: 0 0 9px 9px; }
+.run-list li:only-child .run-item { border-radius: 9px; }
+.run-row { position: relative; display: flex; align-items: stretch; }
+.run-row .run-item { flex: 1 1 auto; min-width: 0; padding-right: 40px; }
+.steps-info { position: absolute; right: 8px; top: 0; bottom: 0; display: flex; align-items: center; }
+.steps-info-btn { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: help; }
+.steps-info-btn:hover, .steps-info-btn:focus-visible { color: var(--text); background: var(--hover); }
+.steps-pop { display: none; position: absolute; top: calc(100% - 2px); right: 0; z-index: 25; width: min(420px, 80vw); max-height: 60vh; overflow-y: auto; padding: 10px 12px; flex-direction: column; gap: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: var(--drawer-shadow); }
+.steps-info:hover .steps-pop, .steps-info:focus-within .steps-pop { display: flex; }
+.steps-pop-group { display: flex; flex-direction: column; gap: 4px; }
+.steps-pop-step { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; }
+.steps-pop-step .dot { width: 7px; height: 7px; flex: none; margin-top: 5px; }
+.steps-pop-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.steps-pop-cmd { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.steps-pop-time { flex: none; font-family: var(--font-mono); font-size: 11px; color: var(--text-3); }
+.run-sec.live { flex: 1 1 0; min-height: 320px; }
+.log.live-log { flex: 1 1 0; min-height: 0; max-height: none; overflow: auto; }
+.run-item.latest { background: none; }
+.run-item.latest:hover, .run-item:hover { background: var(--hover); }
+
+/* ===== Board design update (Nov 22) ===== */
+/* The board and ticket panel share a row under the top bar and filter bar. */
+.board-row { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: row; }
+.board-row > .board-area { flex: 1 1 auto; min-width: 0; }
+.board-row > .glimpse { min-height: 0; }
+.board-row > .ticket-panel.drawer { width: 600px; }
+.runner-status { color: var(--text-2); white-space: nowrap; }
+
+/* Ticket panel header: close on the left, tabs as a segmented control on the right. No room needed for the
+   window buttons any more: the panel starts below the top bar. */
+.ticket-panel .glimpse-head.panel-head { height: 48px; flex: 0 0 48px; padding: 0 16px 0 10px !important; gap: 8px; border-bottom: 1px solid var(--line-soft); -webkit-app-region: no-drag; }
+.panel-close { width: 32px; height: 32px; color: var(--text-2); }
+.panel-head-sep { width: 1px; height: 20px; background: var(--line-soft); flex: none; }
+.seg-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 8px; background: var(--tag-bg); min-width: 0; overflow-x: auto; }
+.seg-tabs button { height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; font: inherit; font-size: 12.5px; font-weight: 500; color: var(--text-2); cursor: pointer; white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.seg-tabs button:hover { color: var(--text); }
+.seg-tabs button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+.ticket-panel .glimpse-head.panel-head .icon-btn.bordered { width: 30px; height: 30px; }
+.ticket-panel .panel-titleblock { padding-top: 16px; gap: 8px; }
+
+/* Runs list: a chevron says the row opens the run's details. */
+.run-item-go { flex: none; color: var(--muted); }
+.run-row .run-item { padding-right: 36px; }
+
+/* Cards */
+.more-btn { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; color: var(--muted); }
+.more-btn:hover { color: var(--text); background: var(--hover); }
+.prio-btn.p2 { color: var(--text-2); }
+.pr-chip.good, button.pr-chip.good:hover { background: var(--done-bg); color: var(--done-ink); }
+.pr-chip.merged, button.pr-chip.merged:hover { background: color-mix(in srgb, var(--merged) 14%, transparent); color: var(--merged); }
+
+/* Sidebar: Running agents shows a count, blue while agents go, amber when some need you. */
+.nav-badge.running { background: var(--running-bg); color: var(--running-ink); }
+.rail-badge { top: 5px; right: 5px; width: auto; min-width: 14px; height: 14px; padding: 0 3px; border: 0; border-radius: 7px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 9.5px; font-weight: 700; color: #fff; }
+.rail-badge.running { background: var(--running); }
+.rail-badge.needs { background: var(--attn); }
+
+/* Ticket panel header controls: inset and bordered so they read as controls. */
+.seg-tabs { border: 1px solid var(--line); background: var(--fact-bg); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06); }
+.seg-tabs button.on { box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, 0.08); }
+.ticket-panel .glimpse-head.panel-head .icon-btn.bordered { border-color: var(--line); background: var(--surface); }
+
+/* Pull request card in the ticket panel: a header row, and a body that opens for checks and merging. */
+.pr-card { border: 1px solid var(--line-soft); border-radius: 10px; background: var(--surface); min-width: 0; }
+.pr-card-head { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 4px 6px 4px 12px; flex-wrap: wrap; min-width: 0; }
+.pr-card-head .pr-link { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
+.pr-card-head .pr-branch { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-toggle { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: none; font: inherit; font-size: 12px; color: var(--text-2); cursor: pointer; white-space: nowrap; }
+.pr-toggle:hover { background: var(--hover); color: var(--text); }
+.pr-chev { transition: transform .15s ease; }
+.pr-card.open .pr-chev { transform: rotate(180deg); }
+.pr-card-body { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px 12px; border-top: 1px solid var(--line-soft); }
+.pr-card-body .pr-checklist li.note { gap: 7px; }
+.pr-card-err { padding: 0 12px 10px; }
+.pr-merge { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 8px; background: var(--fact-bg); }
+.pr-merge-title { font-weight: 600; font-size: 13px; color: var(--text); }
+.pr-merge-text { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-2); }
+.pr-merge-warn { margin: 0; font-size: 12px; font-weight: 500; color: var(--warn-text); }
+.pr-merge-warn.bad { color: var(--failed-ink); }
+.pr-merge-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+@media (prefers-reduced-motion: reduce) { .pr-chev { transition: none; } }
+.pr-stop-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }

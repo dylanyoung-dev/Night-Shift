@@ -274,6 +274,13 @@ function Card({
           <StatusIcon state={state} progress={progress} />
         </button>
         <span className="id">{issue.identifier}</span>
+        <button type="button" className="chip-btn more-btn" aria-label={`More for ${issue.identifier}`} aria-haspopup="menu" onClick={menu('actions')}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="5" cy="12" r="1.8" />
+            <circle cx="12" cy="12" r="1.8" />
+            <circle cx="19" cy="12" r="1.8" />
+          </svg>
+        </button>
         <button
           type="button"
           className={`chip-btn prio-btn p${issue.priority}`}
@@ -282,11 +289,6 @@ function Card({
         >
           <PriorityIcon priority={issue.priority} />
         </button>
-        {issue.parent && (
-          <span className="parent" title={`${issue.parent.identifier} ${issue.parent.title}`}>
-            <span aria-hidden="true">›</span> {issue.parent.title}
-          </span>
-        )}
         <span className="spacer" />
         {issue.blocked && (
           <span className="blocked-tag" title="Blocked by another ticket">
@@ -314,15 +316,15 @@ function Card({
             {type.label.name.replace(/^type\s*[:/›>-]\s*/i, '')}
           </button>
         )}
+        {issue.pullRequests.map((pr) => (
+          <PrChip key={pr.url} pr={pr} onOpen={stop(() => open(pr.url))} />
+        ))}
         {issue.milestone && (
           <button type="button" className="prop milestone-chip" title={issue.milestone.name} aria-label={`Milestone: ${issue.milestone.name}. Change`} onClick={menu('milestone')}>
             <Icon name="flag" size={11} width={2.4} />
             {issue.milestone.name}
           </button>
         )}
-        {issue.pullRequests.map((pr) => (
-          <PrChip key={pr.url} pr={pr} onOpen={stop(() => open(pr.url))} />
-        ))}
         {issue.estimate != null && (
           <button
             type="button"
@@ -376,7 +378,6 @@ function Card({
               </>
             )}
           </div>
-          {waiting && run.waiting && <div className="needs-reason">{run.waiting.reason}</div>}
         </div>
       )}
 

@@ -15,6 +15,7 @@ interface Props {
   issueUrl?(issueId: string): string | undefined // the ticket in Linear, when it's on the board
   onOpenLinear?(url: string): void
   onOpenBoard?(issueId: string): void // show the ticket on the board
+  covered?: boolean // a log is open on top: Esc belongs to it
 }
 
 type Tab = 'all' | 'active' | 'needs' | 'queued' | 'running' | 'done' | 'failed' | 'stopped'
@@ -50,7 +51,8 @@ export default function RunsView({
   allRuns,
   issueUrl,
   onOpenLinear,
-  onOpenBoard
+  onOpenBoard,
+  covered = false
 }: Props): JSX.Element {
   const wide = useWide()
   const [query, setQuery] = useState('')
@@ -75,13 +77,16 @@ export default function RunsView({
       (!q || `${r.identifier} ${r.title} ${r.stepsName} ${r.startedBy ?? ''}`.toLowerCase().includes(q))
   )
   // History: runs going now sit on top as cards; the table lists the rest. Live: everything is a card.
-  const going = live ? filtered : filtered.filter((r) => isActiveRun(r.status))
+  const active = live ? filtered : filtered.filter((r) => isActiveRun(r.status))
+  const going = active.filter((r) => r.status !== 'queued')
+  // Queued runs wait in their own section, oldest first: the order they'll start in.
+  const queued = active.filter((r) => r.status === 'queued').sort((a, b) => a.createdAt - b.createdAt)
   const listed = live ? [] : filtered.filter((r) => !isActiveRun(r.status))
   const lmax = Math.log(Math.max(2, ...listed.map(secs)))
 
   const selected = selectedId ? (allRuns ?? runs).find((r) => r.id === selectedId) ?? null : null
   useEffect(() => {
-    if (!selected) return
+    if (!selected || covered) return
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape' || e.defaultPrevented) return
       const el = document.activeElement as HTMLElement | null
@@ -90,7 +95,7 @@ export default function RunsView({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selected])
+  }, [selected, covered])
 
   // Grouped by ticket: newest ticket first, its runs oldest to newest.
   const groups = useMemo(() => {
@@ -117,28 +122,41 @@ export default function RunsView({
   const card = (r: Run): JSX.Element => {
     const step = r.currentStep >= 0 ? r.steps[r.currentStep] : undefined
     return (
-      <div key={r.id} className={`rh-live tone-${TONE[r.status]}${selectedId === r.id ? ' selected' : ''}`}>
-        <span className={`rh-status tone-${TONE[r.status]}`}>
-          <span className="rh-pulse" aria-hidden="true" />
-          {runLabel[r.status]}
-        </span>
-        <span className="rh-id">{r.identifier}</span>
-        <button type="button" className="rh-title-btn" onClick={() => setSelectedId(r.id)} title="Show details">
-          {r.title}
-        </button>
-        {actionTag(r)}
-        {step && (
-          <span className="note" title={step.name}>
-            Step {r.currentStep + 1} of {r.steps.length}
+      <article key={r.id} className={`rh-live tone-${TONE[r.status]}${selectedId === r.id ? ' selected' : ''}`}>
+        <div className="rh-live-top">
+          <span className={`rh-status tone-${TONE[r.status]}`}>
+            <span className="rh-pulse" aria-hidden="true" />
+            {runLabel[r.status]}
           </span>
-        )}
-        {r.startedBy && <span className="note">by {r.startedBy}</span>}
-        <span className="rh-dur">{r.startedAt ? duration(r.startedAt, r.endedAt) : 'Not started'}</span>
-        <button type="button" className="btn small dark" onClick={() => onOpen(r)} aria-label={`Open the log of ${r.identifier} ${r.stepsName}`}>
-          Open
+          <span className="rh-dur">{r.startedAt ? duration(r.startedAt, r.endedAt) : 'Not started'}</span>
+        </div>
+        <button type="button" className="rh-live-title" onClick={() => setSelectedId(r.id)} title={`${r.title} · show details`}>
+          <span className="rh-id">{r.identifier}</span>
+          <span className="rh-live-name">{r.title}</span>
         </button>
+        <div className="rh-live-meta">
+          {actionTag(r)}
+          {r.startedBy && <span className="note">by {r.startedBy}</span>}
+        </div>
+        {r.steps.length > 0 && (
+          <div className="rh-live-steps">
+            <div className="rh-steps-bar" aria-hidden="true">
+              {r.steps.map((st, i) => (
+                <span key={i} className={`rh-seg ${i === r.currentStep && isActiveRun(r.status) ? 'now' : st.status}`} title={st.name} />
+              ))}
+            </div>
+            <span className="note" title={step?.name}>
+              {step ? `Step ${r.currentStep + 1} of ${r.steps.length} · ${step.name}` : `${r.steps.length} step${r.steps.length === 1 ? '' : 's'}`}
+            </span>
+          </div>
+        )}
         {r.status === 'waiting' && r.waiting?.reason && <p className="rh-reason">{r.waiting.reason}</p>}
-      </div>
+        <div className="rh-live-foot">
+          <button type="button" className="btn small dark" onClick={() => onOpen(r)} aria-label={`Open the log of ${r.identifier} ${r.stepsName}`}>
+            Open log
+          </button>
+        </div>
+      </article>
     )
   }
 
@@ -202,7 +220,16 @@ export default function RunsView({
                 <h2 id="rh-now" className="sec-label">
                   {live ? `Going now · ${going.length}` : 'Running now'}
                 </h2>
-                {going.map(card)}
+                <div className="rh-live-grid">{going.map(card)}</div>
+              </section>
+            )}
+
+            {queued.length > 0 && !grouped && (
+              <section className="rh-sec" aria-labelledby="rh-queued">
+                <h2 id="rh-queued" className="sec-label">
+                  Queued · {queued.length}
+                </h2>
+                <div className="rh-live-grid">{queued.map(card)}</div>
               </section>
             )}
 

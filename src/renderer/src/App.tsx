@@ -287,233 +287,230 @@ export default function App(): JSX.Element {
         wide={wideSidebar}
         runner={{ name: isRemote ? hostName : 'Local runner', busy: runningCount, slots: settings?.maxConcurrent ?? 0 }}
       />
-      {logRun && (
-        <LogView
-          run={logRun}
-          issue={logIssue}
-          onClose={backFromLog}
-          onStop={(id) => void api.stopRun(id)}
-          onOpenLinear={(url) => void api.openInBrowser(url)}
-          actions={logIssue ? setsFor(logIssue.stateName) : []}
-          // Start the action and follow the new run here.
-          onAction={(setName) => logIssue && void start(logIssue.id, setName).then((r) => r && setLogRunId(r.id))}
-        />
-      )}
-      {!logRun && view === 'board' && (
-        <>
-          <div className="main">
-            <header className="topbar">
-              <h1>Board</h1>
-              {settings && !isRemote && (
-                <BranchPicker
-                  repoPath={settings.repoPath}
-                  baseBranch={settings.baseBranch}
-                  label={board.project ? board.project.name : `All of team ${settings.linearTeamKey}`}
-                  onChange={(branch) => void api.saveSettings({ baseBranch: branch, sharedRevs: settings.sharedRevs }).then(setSettings)}
-                />
-              )}
-              {settings && isRemote && (
-                <span className="project-pill static" title="The base branch is set in Settings › Host machine">
-                  <strong>{board.project ? board.project.name : `All of team ${settings.linearTeamKey}`}</strong>
-                  <span className="mono-branch">{settings.baseBranch || 'no base branch'}</span>
-                </span>
-              )}
-              {isRemote && (
-                <span className={`remote-chip${hostDown ? ' down' : ''}`} title={hostDown ? hostDownText : `Runs, actions and automations come from ${hostName}`}>
-                  <span className="dot" aria-hidden="true" />
-                  Remote · {hostName}
-                </span>
-              )}
-              {switchingTo && <span className="status">Loading {switchingTo}…</span>}
-              {needsYou.length > 0 && (
-                <button
-                  type="button"
-                  className="needs-chip"
-                  title={needsYou.map((r) => `${r.identifier}: ${r.waiting?.reason ?? ''}`).join('\n')}
-                  onClick={() => setLogRunId(needsYou[0].id)}
-                >
-                  <span className="pulse" aria-hidden="true" />
-                  <span className="needs-what">{needsYou.length === 1 ? `${needsYou[0].identifier} needs you` : `${needsYou.length} runs need you`}</span>
-                  {wide && needsYou.length === 1 && needsYou[0].waiting?.reason && <span className="needs-why">· {needsYou[0].waiting.reason}</span>}
-                </button>
-              )}
-              <span className="spacer" />
-              {wide && (
-                <span className="status">
-                  <span className="dot" style={{ background: runningCount ? 'var(--ok)' : 'var(--idle)' }} aria-hidden="true" />
-                  {isRemote ? hostName : 'Local'} · {runningCount} of {settings?.maxConcurrent ?? 0} running{queuedCount ? ` · ${queuedCount} queued` : ''}
-                </span>
-              )}
-              <span
-                className="status"
-                title={wide ? undefined : `${isRemote ? hostName : 'Local'}: ${runningCount} of ${settings?.maxConcurrent ?? 0} running${queuedCount ? `, ${queuedCount} queued` : ''}`}
-              >
-                {board.fetchedAt ? `Synced ${new Date(board.fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Not synced yet'}
-              </span>
-              <button
-                className={`icon-btn bordered${reloading ? ' spinning' : ''}`}
-                type="button"
-                disabled={reloading}
-                aria-label="Reload the board from Linear"
-                title={`Reload the board from Linear${board.fetchedAt ? ` · last synced ${new Date(board.fetchedAt).toLocaleTimeString()}` : ''}`}
-                onClick={() => void reloadBoard()}
-              >
-                <Icon name="refresh" size={15} />
-              </button>
-              <span className="start-run" ref={startMenuRef}>
-                <button
-                  className="btn primary run-action"
-                  type="button"
-                  disabled={!globalActions.length || hostDown}
-                  aria-haspopup="menu"
-                  aria-expanded={startMenu}
-                  title={
-                    hostDown
-                      ? `Host offline: ${hostName}`
-                      : globalActions.length
-                      ? `Run a global action from ${settings?.baseBranch || 'the base branch'}`
-                      : 'No global actions yet. Make one on the Actions page and mark it Global.'
-                  }
-                  onClick={() => setStartMenu((o) => !o)}
-                >
-                  <PlayIcon />
-                  Run action
-                  <Icon name="chevron" size={14} />
-                </button>
-                {startMenu && globalActions.length > 0 && (
-                  <span className="start-menu" role="menu">
-                    <span className="start-menu-note">Global actions · from {settings?.baseBranch || 'the base branch'}</span>
-                    {globalActions.map((s) => {
-                      const going = runs.find((r) => r.issueId === globalRunKey(s.name) && isActiveRun(r.status))
-                      return (
-                        <button
-                          key={s.name}
-                          type="button"
-                          role="menuitem"
-                          className="issue-menu-item"
-                          title={going ? 'Already running. Click to open its log.' : `Run ${s.name}`}
-                          onClick={() => (going ? (setStartMenu(false), setLogRunId(going.id)) : void startGlobal(s.name))}
-                        >
-                          <span className="lbl">{setLabel(s)}</span>
-                          {going && <span className="hint">running</span>}
-                        </button>
-                      )
-                    })}
+      {/* The page underneath stays mounted (inert) while a log is open, so Back returns to it as it was:
+          same scroll, filters and open details. */}
+      <div className="app-stage">
+        <div className={`app-view${logRun ? ' covered' : ''}`} {...(logRun ? { inert: '' } : {})}>
+          {view === 'board' && (
+            <>
+              <div className="main">
+                <header className="topbar">
+                  <h1>Board</h1>
+                  {settings && !isRemote && (
+                    <BranchPicker
+                      repoPath={settings.repoPath}
+                      baseBranch={settings.baseBranch}
+                      label={board.project ? board.project.name : `All of team ${settings.linearTeamKey}`}
+                      onChange={(branch) => void api.saveSettings({ baseBranch: branch, sharedRevs: settings.sharedRevs }).then(setSettings)}
+                    />
+                  )}
+                  {settings && isRemote && (
+                    <span className="project-pill static" title="The base branch is set in Settings › Host machine">
+                      <strong>{board.project ? board.project.name : `All of team ${settings.linearTeamKey}`}</strong>
+                      <span className="mono-branch">{settings.baseBranch || 'no base branch'}</span>
+                    </span>
+                  )}
+                  {isRemote && (
+                    <span className={`remote-chip${hostDown ? ' down' : ''}`} title={hostDown ? hostDownText : `Runs, actions and automations come from ${hostName}`}>
+                      <span className="dot" aria-hidden="true" />
+                      Remote · {hostName}
+                    </span>
+                  )}
+                  {switchingTo && <span className="status">Loading {switchingTo}…</span>}
+                  <span className="spacer" />
+                  <span className="status runner-status">
+                    <span className="dot" style={{ background: runningCount ? 'var(--ok)' : 'var(--idle)' }} aria-hidden="true" />
+                    {isRemote ? hostName : 'Local'} · {runningCount} of {settings?.maxConcurrent ?? 0} running{queuedCount ? ` · ${queuedCount} queued` : ''}
                   </span>
+                  <span className="status">
+                    {board.fetchedAt ? `Synced ${new Date(board.fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Not synced yet'}
+                  </span>
+                  <button
+                    className={`icon-btn bordered${reloading ? ' spinning' : ''}`}
+                    type="button"
+                    disabled={reloading}
+                    aria-label="Reload the board from Linear"
+                    title={`Reload the board from Linear${board.fetchedAt ? ` · last synced ${new Date(board.fetchedAt).toLocaleTimeString()}` : ''}`}
+                    onClick={() => void reloadBoard()}
+                  >
+                    <Icon name="refresh" size={15} />
+                  </button>
+                  <span className="start-run" ref={startMenuRef}>
+                    <button
+                      className="btn primary run-action"
+                      type="button"
+                      disabled={!globalActions.length || hostDown}
+                      aria-haspopup="menu"
+                      aria-expanded={startMenu}
+                      title={
+                        hostDown
+                          ? `Host offline: ${hostName}`
+                          : globalActions.length
+                          ? `Run a global action from ${settings?.baseBranch || 'the base branch'}`
+                          : 'No global actions yet. Make one on the Actions page and mark it Global.'
+                      }
+                      onClick={() => setStartMenu((o) => !o)}
+                    >
+                      <PlayIcon />
+                      Run action
+                      <Icon name="chevron" size={14} />
+                    </button>
+                    {startMenu && globalActions.length > 0 && (
+                      <span className="start-menu" role="menu">
+                        <span className="start-menu-note">Global actions · from {settings?.baseBranch || 'the base branch'}</span>
+                        {globalActions.map((s) => {
+                          const going = runs.find((r) => r.issueId === globalRunKey(s.name) && isActiveRun(r.status))
+                          return (
+                            <button
+                              key={s.name}
+                              type="button"
+                              role="menuitem"
+                              className="issue-menu-item"
+                              title={going ? 'Already running. Click to open its log.' : `Run ${s.name}`}
+                              onClick={() => (going ? (setStartMenu(false), setLogRunId(going.id)) : void startGlobal(s.name))}
+                            >
+                              <span className="lbl">{setLabel(s)}</span>
+                              {going && <span className="hint">running</span>}
+                            </button>
+                          )
+                        })}
+                      </span>
+                    )}
+                  </span>
+                </header>
+                {hostDown && <div className="banner">{hostDownText}</div>}
+                {board.error && <div className="banner">{board.error}</div>}
+                {message && <div className="banner">{message}</div>}
+                <FilterBar
+                  filters={filters}
+                  team={board.team}
+                  shown={shownBoard.issues.length}
+                  total={board.issues.length}
+                  onChange={setFilters}
+                  groupBy={groupBy}
+                  onGroupBy={chooseGroupBy}
+                  wide={wide}
+                />
+                {/* The board and the ticket panel share this row, so the panel (docked or drawer) opens below
+                    the top bar and filter bar, clear of the window buttons. */}
+                <div className="board-row">
+                <div className="board-area" aria-busy={reloading}>
+                <Board
+                  board={shownBoard}
+                  latestRun={latestRun}
+                  runsByIssue={runsByIssue}
+                  onReorderColumns={reorderColumns}
+                  onOpenLog={setLogRunId}
+                  selectedIssue={selectedIssue}
+                  onSelect={setSelectedIssue}
+                  onClearSelection={() => setSelectedIssue(null)}
+                  onStart={(id, setName) => void start(id, setName)}
+                  setsFor={setsFor}
+                  groupBy={groupBy}
+                  wide={wide}
+                  onUpdate={(id, update) => void updateIssue(id, update)}
+                  onGlimpse={(id, tab) => (setSelectedIssue(id), setPanelTab({ tab: tab ?? 'ticket', at: Date.now() }))}
+                />
+                {reloading && (
+                  <div className="board-lock" role="status">
+                    <span className="spinner" aria-hidden="true" />
+                    Reloading from Linear…
+                  </div>
                 )}
-              </span>
-            </header>
-            {hostDown && <div className="banner">{hostDownText}</div>}
-            {board.error && <div className="banner">{board.error}</div>}
-            {message && <div className="banner">{message}</div>}
-            <FilterBar
-              filters={filters}
-              team={board.team}
-              shown={shownBoard.issues.length}
-              total={board.issues.length}
-              onChange={setFilters}
-              groupBy={groupBy}
-              onGroupBy={chooseGroupBy}
-              wide={wide}
-            />
-            <div className="board-area" aria-busy={reloading}>
-            <Board
-              board={shownBoard}
-              latestRun={latestRun}
-              runsByIssue={runsByIssue}
-              onReorderColumns={reorderColumns}
-              onOpenLog={setLogRunId}
-              selectedIssue={selectedIssue}
-              onSelect={setSelectedIssue}
-              onClearSelection={() => setSelectedIssue(null)}
-              onStart={(id, setName) => void start(id, setName)}
-              setsFor={setsFor}
-              groupBy={groupBy}
-              wide={wide}
-              onUpdate={(id, update) => void updateIssue(id, update)}
-              onGlimpse={(id, tab) => (setSelectedIssue(id), setPanelTab({ tab: tab ?? 'ticket', at: Date.now() }))}
-            />
-            {reloading && (
-              <div className="board-lock" role="status">
-                <span className="spinner" aria-hidden="true" />
-                Reloading from Linear…
+                </div>
+                {(issue || run) && !wide && (
+                  <button type="button" className="drawer-scrim" aria-label="Close ticket" tabIndex={-1} onClick={() => setSelectedIssue(null)} />
+                )}
+                {(issue || run) && (
+                <TicketPanel
+                  wide={wide}
+                  tabRequest={panelTab}
+                  issue={issue}
+                  run={run}
+                  history={selectedIssue ? runsByIssue.get(selectedIssue) ?? [] : []}
+                  log={run ? logs[run.id] ?? run.logTail : ''}
+                  sets={issue ? setsFor(issue.stateName) : []}
+                  onStart={(id, setName) => void start(id, setName)}
+                  onStop={(id) => void api.stopRun(id)}
+                  onOpenLog={setLogRunId}
+                  onOpenLinear={(url) => void api.openInBrowser(url)}
+                  onClose={() => setSelectedIssue(null)}
+                />
+                )}
+                </div>
               </div>
-            )}
-            </div>
+            </>
+          )}
+          {view === 'agents' && (
+            <RunsView
+              runs={activeRuns}
+              title="Running agents"
+              note={`${runningCount} running · ${queuedCount} queued · max ${settings?.maxConcurrent ?? 0} local`}
+              empty="Nothing running right now."
+              live
+              allRuns={runs}
+              issueUrl={(id) => board.issues.find((i) => i.id === id)?.url}
+              onOpenLinear={(url) => void api.openInBrowser(url)}
+              onOpenBoard={(id) => {
+                setLogRunId(null)
+                setView('board')
+                setSelectedIssue(id)
+              }}
+              onOpen={(r) => setLogRunId(r.id)}
+              covered={!!logRun}
+            />
+          )}
+          {view === 'runs' && (
+            <RunsView
+              runs={runs}
+              allRuns={runs}
+              issueUrl={(id) => board.issues.find((i) => i.id === id)?.url}
+              onOpenLinear={(url) => void api.openInBrowser(url)}
+              onOpenBoard={(id) => {
+                setLogRunId(null)
+                setView('board')
+                setSelectedIssue(id)
+              }}
+              onOpen={(r) => setLogRunId(r.id)}
+              covered={!!logRun}
+            />
+          )}
+          {view === 'usage' && <UsageView />}
+          {view === 'steps' && <StepsView settings={settings} states={board.allStates?.length ? board.allStates : board.states} />}
+          {view === 'settings' && settings && (
+            <SettingsView settings={settings} onSaved={setSettings} />
+          )}
+          {view === 'automations' && settings && (
+            <AutomationsView
+              settings={settings}
+              states={board.allStates?.length ? board.allStates : board.states}
+              onSaved={setSettings}
+            />
+          )}
+          {view === 'projects' && settings && (
+            <ProjectsView
+              settings={settings}
+              linearProjects={board.team?.projects ?? []}
+              onSaved={setSettings}
+              onShow={(id) => void chooseProject(id)}
+            />
+          )}
+        </div>
+        {logRun && (
+          <div className="lv-overlay">
+            <LogView
+              run={logRun}
+              issue={logIssue}
+              onClose={backFromLog}
+              onStop={(id) => void api.stopRun(id)}
+              onOpenLinear={(url) => void api.openInBrowser(url)}
+              actions={logIssue ? setsFor(logIssue.stateName) : []}
+              // Start the action and follow the new run here.
+              onAction={(setName) => logIssue && void start(logIssue.id, setName).then((r) => r && setLogRunId(r.id))}
+            />
           </div>
-          {(issue || run) && !wide && (
-            <button type="button" className="drawer-scrim" aria-label="Close ticket" tabIndex={-1} onClick={() => setSelectedIssue(null)} />
-          )}
-          {(issue || run) && (
-          <TicketPanel
-            wide={wide}
-            tabRequest={panelTab}
-            issue={issue}
-            run={run}
-            history={selectedIssue ? runsByIssue.get(selectedIssue) ?? [] : []}
-            log={run ? logs[run.id] ?? run.logTail : ''}
-            sets={issue ? setsFor(issue.stateName) : []}
-            onStart={(id, setName) => void start(id, setName)}
-            onStop={(id) => void api.stopRun(id)}
-            onOpenLog={setLogRunId}
-            onOpenLinear={(url) => void api.openInBrowser(url)}
-            onClose={() => setSelectedIssue(null)}
-          />
-          )}
-        </>
-      )}
-      {!logRun && view === 'agents' && (
-        <RunsView
-          runs={activeRuns}
-          title="Running agents"
-          note={`${runningCount} running · ${queuedCount} queued · max ${settings?.maxConcurrent ?? 0} local`}
-          empty="Nothing running right now."
-          live
-          allRuns={runs}
-          issueUrl={(id) => board.issues.find((i) => i.id === id)?.url}
-          onOpenLinear={(url) => void api.openInBrowser(url)}
-          onOpenBoard={(id) => {
-            setLogRunId(null)
-            setView('board')
-            setSelectedIssue(id)
-          }}
-          onOpen={(r) => setLogRunId(r.id)}
-        />
-      )}
-      {!logRun && view === 'runs' && (
-        <RunsView
-          runs={runs}
-          allRuns={runs}
-          issueUrl={(id) => board.issues.find((i) => i.id === id)?.url}
-          onOpenLinear={(url) => void api.openInBrowser(url)}
-          onOpenBoard={(id) => {
-            setLogRunId(null)
-            setView('board')
-            setSelectedIssue(id)
-          }}
-          onOpen={(r) => setLogRunId(r.id)}
-        />
-      )}
-      {!logRun && view === 'usage' && <UsageView />}
-      {!logRun && view === 'steps' && <StepsView settings={settings} states={board.allStates?.length ? board.allStates : board.states} />}
-      {!logRun && view === 'settings' && settings && (
-        <SettingsView settings={settings} onSaved={setSettings} />
-      )}
-      {!logRun && view === 'automations' && settings && (
-        <AutomationsView
-          settings={settings}
-          states={board.allStates?.length ? board.allStates : board.states}
-          onSaved={setSettings}
-        />
-      )}
-      {!logRun && view === 'projects' && settings && (
-        <ProjectsView
-          settings={settings}
-          linearProjects={board.team?.projects ?? []}
-          onSaved={setSettings}
-          onShow={(id) => void chooseProject(id)}
-        />
-      )}
+        )}
+      </div>
       <UpdateBanner running={runningCount} />
     </div>
   )

@@ -164,6 +164,11 @@ export default function UsageView(): JSX.Element {
               <section className="u-section" aria-labelledby="u-tickets">
                 <h2 id="u-tickets" className="sec-label">
                   Tickets
+                  {tickets.stats && (
+                    <span className="sec-label-note" title="Saved on this machine and updated every 15 minutes">
+                      Updated {clock(tickets.stats.generatedAt)}
+                    </span>
+                  )}
                 </h2>
                 <TicketTiles stats={tickets.stats} supported={tickets.supported} days={days} />
               </section>

@@ -82,6 +82,18 @@ export async function mergePullRequest(url: string): Promise<string | null> {
   return null
 }
 
+// Stops the pull request's running GitHub Actions runs. Returns a line to show: what happened, or the error.
+export async function stopPrChecks(url: string): Promise<{ ok: boolean; text: string }> {
+  if (!window.nightShift.cancelPrChecks) return { ok: false, text: 'Restart Night Shift to stop checks from here.' }
+  const r = await window.nightShift.cancelPrChecks(url)
+  await refreshPrs([url], true)
+  setTimeout(() => void refreshPrs([url], true), 8_000) // GitHub takes a few seconds to mark them cancelled
+  if ('error' in r) return { ok: false, text: r.error }
+  const parts = [r.cancelled ? `Cancelled ${r.cancelled} GitHub Actions ${r.cancelled === 1 ? 'run' : 'runs'}.` : 'No GitHub Actions runs were going.']
+  if (r.other) parts.push(`${r.other} ${r.other === 1 ? 'check comes' : 'checks come'} from another app (like Vercel) and can't be stopped from here.`)
+  return { ok: true, text: parts.join(' ') }
+}
+
 // One short phrase for what's holding a PR up, or null when it's good to go (or merged/closed).
 export function prProblem(s: PrStatus): { text: string; tone: 'bad' | 'wait' } | null {
   if (s.state === 'merged' || s.state === 'closed') return null

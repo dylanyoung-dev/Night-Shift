@@ -143,7 +143,6 @@ export default function TicketPanel(props: Props): JSX.Element {
   const doc = tab === 'spec' ? spec : docs.find((x) => x.id === tab)
   const tabOn = (id: string): boolean => tab === id || (id !== 'run' && id !== 'ticket' && doc?.id === id) || (id === 'spec' && tab === 'spec')
   const identifier = issue?.identifier ?? run?.identifier ?? ''
-  const openUrl = (url: string) => () => onOpenLinear(url)
 
   const title = d?.title ?? issue?.title ?? run?.title ?? ''
   const tone = run ? STATUS_TONE[run.status] : 'idle'
@@ -155,26 +154,38 @@ export default function TicketPanel(props: Props): JSX.Element {
       aria-label={`${identifier} details`}
     >
       {wide && <div className="glimpse-resize" role="separator" aria-orientation="vertical" aria-label="Resize" onPointerDown={startResize} />}
-      <header className="glimpse-head">
+      {/* One header row: close on the left (away from the window buttons), the ticket and its status,
+          then the tabs and refresh. */}
+      <header className="glimpse-head panel-head">
+        <button className="icon-btn panel-close" type="button" onClick={onClose} title="Close panel (Esc)" aria-label="Close panel">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m6 7 5 5-5 5M13 7l5 5-5 5" />
+          </svg>
+        </button>
+        <span className="panel-head-sep" aria-hidden="true" />
         <span className="mono panel-id">{identifier}</span>
         {(run || issue) && (
           <span className={`status-pill ${tone}`}>
-            {run ? (
-              <>
-                <span className="dot" style={{ background: runColor[run.status] }} aria-hidden="true" />
-                {runLabel[run.status]}
-              </>
-            ) : (
-              issue?.stateName
-            )}
+            <span className="dot" style={{ background: run ? runColor[run.status] : 'currentColor' }} aria-hidden="true" />
+            {run ? runLabel[run.status] : issue?.stateName}
           </span>
         )}
-        {d?.parent && (
-          <button type="button" className="glimpse-crumb" onClick={openUrl(d.parent.url)} title={`${d.parent.identifier} ${d.parent.title}`}>
-            › {d.parent.title}
-          </button>
-        )}
         <span className="spacer" />
+        {issue && (
+          <div className="seg-tabs" role="tablist" aria-label="Run, ticket and documents">
+            <button type="button" role="tab" aria-selected={tab === 'run'} className={tab === 'run' ? 'on' : ''} onClick={() => setTab('run')}>
+              Run
+            </button>
+            <button type="button" role="tab" aria-selected={tab === 'ticket'} className={tab === 'ticket' ? 'on' : ''} onClick={() => setTab('ticket')}>
+              Ticket
+            </button>
+            {docTabs.map((x) => (
+              <button key={x.id} type="button" role="tab" aria-selected={tabOn(x.id)} className={tabOn(x.id) ? 'on' : ''} onClick={() => setTab(x.id)} title={x.title}>
+                {x.title}
+              </button>
+            ))}
+          </div>
+        )}
         {issue && (
           <button
             className={`icon-btn bordered${busy ? ' spinning' : ''}`}
@@ -187,36 +198,12 @@ export default function TicketPanel(props: Props): JSX.Element {
             <Icon name="refresh" size={14} />
           </button>
         )}
-        {issue && (
-          <button className="btn small open-linear" type="button" onClick={openUrl(doc && tab !== 'ticket' && tab !== 'run' ? doc.url : issue.url)} title="Open in your browser">
-            Open in Linear
-            <Icon name="external" size={12} width={2.2} />
-          </button>
-        )}
-        <button className="icon-btn" type="button" onClick={onClose} title="Close (Esc)" aria-label="Close panel">
-          <Icon name="close" size={16} />
-        </button>
       </header>
 
       <div className="panel-titleblock">
         {refreshError && <div className="note warn">{refreshError}</div>}
         {title && <h2 className="panel-title">{title}</h2>}
         {issue && <PrStrip prs={issue.pullRequests} openUrl={onOpenLinear} />}
-        {issue && (
-          <div className="glimpse-tabs" role="tablist" aria-label="Run, ticket and documents">
-            <button type="button" role="tab" aria-selected={tab === 'run'} className={tab === 'run' ? 'on' : ''} onClick={() => setTab('run')}>
-              Run
-            </button>
-            <button type="button" role="tab" aria-selected={tab === 'ticket'} className={tab === 'ticket' ? 'on' : ''} onClick={() => setTab('ticket')}>
-              Ticket
-            </button>
-            {docTabs.map((x) => (
-              <button key={x.id} type="button" role="tab" aria-selected={tabOn(x.id)} className={tabOn(x.id) ? 'on' : ''} onClick={() => setTab(x.id)}>
-                <DocIcon /> {x.title}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
       {!linear && <RunDetails {...props} />}
