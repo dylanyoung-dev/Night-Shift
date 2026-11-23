@@ -20,26 +20,30 @@ interface Props extends RunDetailsProps {
   onClose(): void
 }
 
-// Each group of tabs remembers its own width: the run view is narrower, Linear's ticket view wider.
-// Widths are a share of the window, so the panel grows on a wide or ultrawide screen instead of
-// staying a thin strip; min and max are in pixels. The board always keeps at least BOARD_MIN.
-const WIDTHS = {
-  run: { key: 'nightshift.panelShare', min: 380, max: 1100, def: 0.3125 }, // about 600px on a 1920px screen
-  linear: { key: 'nightshift.glimpseShare', min: 520, max: 1800, def: 0.45 }
-}
+// One width for every tab, so opening the ticket or spec doesn't resize the panel. It is a share of
+// the window (it grows on a wide screen), can be dragged by its left edge, or switched to the expanded
+// width with the button in the header. Min and max are in pixels; the board keeps at least BOARD_MIN.
+const WIDTH = { key: 'nightshift.panelShare', min: 380, max: 1100, def: 0.3125 } // about 600px on a 1920px screen
+const EXPANDED_KEY = 'nightshift.panelExpanded'
+const EXPANDED_MAX = 1800
 const BOARD_MIN = 520
-type Group = keyof typeof WIDTHS
-function savedShare(g: Group): number {
+function savedShare(): number {
   try {
-    const n = Number(localStorage.getItem(WIDTHS[g].key))
-    return n > 0.05 && n < 0.95 ? n : WIDTHS[g].def
+    const n = Number(localStorage.getItem(WIDTH.key))
+    return n > 0.05 && n < 0.95 ? n : WIDTH.def
   } catch {
-    return WIDTHS[g].def
+    return WIDTH.def
   }
 }
-function toPx(g: Group, share: number, windowW: number): number {
-  const { min, max } = WIDTHS[g]
-  return Math.round(Math.max(min, Math.min(max, windowW - BOARD_MIN, share * windowW)))
+function savedExpanded(): boolean {
+  try {
+    return localStorage.getItem(EXPANDED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+function toPx(share: number, windowW: number): number {
+  return Math.round(Math.max(WIDTH.min, Math.min(WIDTH.max, windowW - BOARD_MIN, share * windowW)))
 }
 function useWindowWidth(): number {
   const [w, setW] = useState(window.innerWidth)
@@ -78,7 +82,6 @@ export default function TicketPanel(props: Props): JSX.Element {
     setTab((t) => (t === 'run' || t === 'ticket' ? t : 'spec'))
   }, [issue?.id])
   const linear = !!issue && tab !== 'run'
-  const group: Group = linear ? 'linear' : 'run'
 
   const sig = issue ? JSON.stringify(issue) : ''
   const { detail, error, loading, reload } = useIssueDetail(issue?.id ?? null, sig, linear)
@@ -108,27 +111,38 @@ export default function TicketPanel(props: Props): JSX.Element {
   const busy = refreshing || (linear && loading)
 
   const windowW = useWindowWidth()
-  const [shares, setShares] = useState(() => ({ run: savedShare('run'), linear: savedShare('linear') }))
-  const width = toPx(group, shares[group], windowW)
+  const [share, setShare] = useState(savedShare)
+  const [expanded, setExpandedState] = useState(savedExpanded)
+  function setExpanded(on: boolean): void {
+    setExpandedState(on)
+    try {
+      localStorage.setItem(EXPANDED_KEY, on ? '1' : '0')
+    } catch {
+      /* per-viewer nicety only */
+    }
+  }
+  const width = expanded ? Math.max(WIDTH.min, Math.min(EXPANDED_MAX, windowW - BOARD_MIN)) : toPx(share, windowW)
   function startResize(e: React.PointerEvent<HTMLDivElement>): void {
     e.preventDefault()
     const startX = e.clientX
-    const startW = width
+    const startW = Math.min(width, WIDTH.max)
     const target = e.currentTarget
     target.setPointerCapture(e.pointerId)
     document.body.classList.add('resizing')
-    let share = shares[group]
+    // Dragging goes back to a normal width, starting from where the panel is now.
+    setExpanded(false)
+    let next = share
     const move = (ev: PointerEvent): void => {
-      const w = Math.max(WIDTHS[group].min, Math.min(WIDTHS[group].max, window.innerWidth - BOARD_MIN, startW + (startX - ev.clientX)))
-      share = w / window.innerWidth
-      setShares((x) => ({ ...x, [group]: share }))
+      const w = Math.max(WIDTH.min, Math.min(WIDTH.max, window.innerWidth - BOARD_MIN, startW + (startX - ev.clientX)))
+      next = w / window.innerWidth
+      setShare(next)
     }
     const up = (): void => {
       target.removeEventListener('pointermove', move)
       target.removeEventListener('pointerup', up)
       document.body.classList.remove('resizing')
       try {
-        localStorage.setItem(WIDTHS[group].key, share.toFixed(4))
+        localStorage.setItem(WIDTH.key, next.toFixed(4))
       } catch {
         /* per-viewer nicety only */
       }
@@ -150,8 +164,8 @@ export default function TicketPanel(props: Props): JSX.Element {
 
   return (
     <aside
-      className={`glimpse ticket-panel${wide ? '' : ' drawer'}`}
-      style={wide ? { flexBasis: width, width, minWidth: Math.min(WIDTHS[group].min, width) } : undefined}
+      className={`glimpse ticket-panel${wide ? '' : ' drawer'}${expanded ? ' expanded' : ''}`}
+      style={wide ? { flexBasis: width, width, minWidth: Math.min(WIDTH.min, width) } : undefined}
       aria-label={`${identifier} details`}
     >
       {wide && <div className="glimpse-resize" role="separator" aria-orientation="vertical" aria-label="Resize" onPointerDown={startResize} />}
@@ -187,6 +201,18 @@ export default function TicketPanel(props: Props): JSX.Element {
             ))}
           </div>
         )}
+        <button
+          className={`icon-btn bordered${expanded ? ' on' : ''}`}
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          title={expanded ? 'Back to the normal width' : 'Make the panel wider'}
+          aria-label={expanded ? 'Collapse panel' : 'Expand panel'}
+          aria-pressed={expanded}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {expanded ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}
+          </svg>
+        </button>
         {issue && (
           <button
             className={`icon-btn bordered${busy ? ' spinning' : ''}`}

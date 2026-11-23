@@ -1,10 +1,27 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { app } from 'electron'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import YAML from 'yaml'
 import { DEFAULT_CLAUDE_COMMAND, setLabel, type OnFailure, type StepDef, type StepSet, type StepsFile, type WorktreeConfig } from '../shared/types'
 
-// Steps live in the repo the agents work in, so cloud runs and changes via PR use the same file.
-export const STEPS_RELATIVE_PATH = join('.nightshift', 'steps.yml')
+// Actions are Night Shift's own settings, so they live with the app's data (next to settings.json),
+// never in the repo the agents work in, where a checkout, clean or reset could remove them.
+export function stepsFilePath(): string {
+  return join(app.getPath('userData'), 'steps.yml')
+}
+// Where older versions kept them. Read once to bring them over, never written.
+const LEGACY_RELATIVE_PATH = join('.nightshift', 'steps.yml')
+function migrateLegacy(repoPath: string, path: string): void {
+  if (existsSync(path) || !repoPath) return
+  const old = join(repoPath, LEGACY_RELATIVE_PATH)
+  if (!existsSync(old)) return
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+    copyFileSync(old, path)
+  } catch {
+    /* fall back to the defaults below */
+  }
+}
 
 export const DEFAULT_SETS: StepSet[] = [
   {
@@ -115,9 +132,9 @@ export function checkSets(sets: StepSet[]): string[] {
   return problems
 }
 
-export function loadSteps(repoPath: string): StepsFile {
-  if (!repoPath) return { path: null, sets: DEFAULT_SETS }
-  const path = join(repoPath, STEPS_RELATIVE_PATH)
+export function loadSteps(repoPath = ''): StepsFile {
+  const path = stepsFilePath()
+  migrateLegacy(repoPath, path)
   if (!existsSync(path)) return { path: null, sets: DEFAULT_SETS }
   try {
     const text = readFileSync(path, 'utf8')
@@ -165,7 +182,7 @@ function stepToYaml(st: StepDef): Raw {
   return out
 }
 
-const HEADER = `# Night Shift actions. Edited from the Actions page or by hand; either way it changes through PRs.
+const HEADER = `# Night Shift actions, kept with the app's own data (not in the repo). Edit from the Actions page or by hand.
 # Each entry under "sets:" is an action: a named list of steps for tickets in any of its states,
 # shown in their cards' Actions menu (label). A state can have several actions, each with its own label.
 #
@@ -213,20 +230,18 @@ export function stringifySteps(sets: StepSet[]): string {
 }
 
 // Writes the file after checking it. Comments other than the header are not kept.
-export function saveSteps(repoPath: string, sets: StepSet[]): StepsFile | { error: string } {
-  if (!repoPath) return { error: 'Set the repo path in Settings first.' }
-  if (!existsSync(repoPath)) return { error: "The repo path in Settings doesn't exist." }
+export function saveSteps(sets: StepSet[]): StepsFile | { error: string } {
   const clean = sets.map((set, i) => normalizeSet(set as unknown as Raw, `Steps ${i + 1}`, [...new Set(set.states.map((s) => s.trim()).filter(Boolean))]))
   const problems = checkSets(clean)
   if (problems.length) return { error: problems.join(' ') }
-  const path = join(repoPath, STEPS_RELATIVE_PATH)
+  const path = stepsFilePath()
   try {
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, stringifySteps(clean))
   } catch (err) {
     return { error: `Could not write ${path}: ${(err as Error).message}` }
   }
-  return loadSteps(repoPath)
+  return loadSteps()
 }
 
 export function starterSteps(): string {

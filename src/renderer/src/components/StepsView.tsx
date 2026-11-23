@@ -392,30 +392,28 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
               )}
             </div>
             <div className="actions-path">
-              {!settings?.repoPath ? (
-                'Set the repo path in Settings to save actions.'
-              ) : file?.path ? (
-                settings.mode === 'remote' ? (
+              {file?.path ? (
+                settings?.mode === 'remote' ? (
                   <>
                     Saved on the host, in <span className="mono-path">{file.path}</span>. Changes show on every machine straight away.
                   </>
                 ) : (
                   <>
-                    Saved to <span className="mono-path">{file.path}</span> · commit it so changes go through a PR
+                    Saved with Night Shift's own data, in <span className="mono-path">{file.path}</span>
                   </>
                 )
               ) : (
                 <>
-                  Using built-in defaults. Saving creates <span className="mono-path">{settings.repoPath}\.nightshift\steps.yml</span>.
+                  Using built-in defaults. Saving stores them with Night Shift's own data, not in the repo.
                 </>
               )}
             </div>
           </div>
-          <SaveStatus dirty={dirty} saving={saving} saved={saved} onSave={settings?.repoPath ? () => void save() : undefined} />
+          <SaveStatus dirty={dirty} saving={saving} saved={saved} onSave={() => void save()} />
           <button className="btn" type="button" onClick={load} disabled={saving}>
             {dirty ? 'Discard' : 'Reload'}
           </button>
-          <button className="btn primary" type="button" onClick={() => void save()} disabled={!dirty || saving || !settings?.repoPath}>
+          <button className="btn primary" type="button" onClick={() => void save()} disabled={!dirty || saving}>
             Save actions
           </button>
         </header>

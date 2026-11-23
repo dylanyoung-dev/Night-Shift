@@ -6,7 +6,7 @@ import type { BoardData, HostMachineSettings, ImportGroupKey, IssueUpdate, Linea
 import { globalRunKey, isActiveRun } from '../shared/types'
 import { getGithubToken, getLinearKey, getSettings, migrateLooseSecrets, updateSettings } from './settings'
 import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, removeLabelByName, updateIssue, fetchIssueDetail, fetchIssueRelations, fetchLinearImage, fetchIssueStates } from './linear'
-import { globalSet, loadSteps, parseSteps, saveSteps, setForState, setsForState, starterSteps, stringifySteps, STEPS_RELATIVE_PATH } from './steps'
+import { globalSet, loadSteps, parseSteps, saveSteps, setForState, setsForState, starterSteps, stepsFilePath, stringifySteps } from './steps'
 import { Runner, resolveWorktreePath } from './runner'
 import { cleanupWorktrees } from './worktreeCleanup'
 import { fetchPrStatuses, mergePr, cancelPrChecks } from './github'
@@ -286,9 +286,7 @@ function stepsHere(): StepsFile {
 
 // Saves actions here, changing only the ones the editor changed, and refusing any changed meanwhile.
 function saveStepsHere(sets: StepSet[], revs: Record<string, string> | undefined, by: string): StepsFile | { error: string; conflict?: SaveConflict } {
-  const repo = getSettings().repoPath
-  if (!repo) return { error: 'Set the repo path in Settings first.' }
-  const current = loadSteps(repo)
+  const current = loadSteps(getSettings().repoPath)
   let incoming: StepSet[]
   try {
     incoming = parseSteps(stringifySteps(sets)) // the same shape as a file read, so untouched actions match
@@ -301,7 +299,7 @@ function saveStepsHere(sets: StepSet[], revs: Record<string, string> | undefined
     const conflict = { message: conflictMessage(m.conflicts), items: m.conflicts }
     return { error: conflict.message, conflict }
   }
-  const res = saveSteps(repo, m.items)
+  const res = saveSteps(m.items)
   if ('error' in res) return res
   noteEdits(m.changed, by)
   send('steps-changed')
@@ -846,11 +844,9 @@ function registerIpc(): void {
   })
   ipcMain.handle('steps:open', async () => {
     if (remoteMode()) return // the file is on the host
-    const repo = getSettings().repoPath
-    if (!repo) return
-    const path = join(repo, STEPS_RELATIVE_PATH)
+    const path = stepsFilePath()
     if (!existsSync(path)) {
-      mkdirSync(join(repo, '.nightshift'), { recursive: true })
+      mkdirSync(dirname(path), { recursive: true })
       writeFileSync(path, starterSteps())
     }
     await shell.openPath(path)

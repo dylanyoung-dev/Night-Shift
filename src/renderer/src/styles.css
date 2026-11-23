@@ -2273,3 +2273,10 @@ button.prop:disabled:hover { background: var(--tag-bg); color: var(--tag); }
 @media (prefers-reduced-motion: reduce) {
   .segs .seg-now::after, .rh-live.tone-running .rh-seg.now::after, .rd-track-step.running .rd-track-bar > span { animation: none; opacity: .6; }
 }
+
+/* Panel width: one width for every tab; the expand button in the header is always there, and the
+   drag edge shows a small grip so it can be found without hunting for it. */
+.ticket-panel .glimpse-head.panel-head .icon-btn.bordered.on { background: var(--accent-soft, var(--hover)); border-color: var(--accent-soft-line, var(--line-3)); color: var(--text); }
+.board-row > .ticket-panel.drawer.expanded { width: min(1100px, calc(100% - 120px)); max-width: none; }
+.glimpse-resize::after { content: ''; position: absolute; left: 1px; top: 50%; width: 4px; height: 36px; margin-top: -18px; border-radius: 2px; background: var(--line-3); opacity: .7; }
+.glimpse-resize:hover::after { background: var(--accent, var(--line-3)); opacity: 1; }
