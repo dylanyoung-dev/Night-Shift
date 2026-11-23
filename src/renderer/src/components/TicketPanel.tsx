@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { IssueComment, IssueDetail, LinearIssue } from '../../../shared/types'
 import { cachedIssueDetail, useIssueDetail } from '../issueDetailCache'
 import { runColor, runLabel } from '../util'
@@ -7,9 +7,10 @@ import { Avatar, DocIcon, MilestoneIcon, PRIORITY_LABEL, PriorityIcon, StatusIco
 import Markdown from './Markdown'
 import RunDetails, { type RunDetailsProps } from './RunPanel'
 import PrStrip from './PrStrip'
+import CodeReview from './CodeReview'
 import { refreshPrs } from '../prStatus'
 
-// 'run', 'ticket', 'spec' (the spec document, whichever it turns out to be) or a document id
+// 'run', 'ticket', 'review' (code review), 'spec' (the spec document, whichever it turns out to be) or a document id
 export type PanelTab = string
 
 interface Props extends RunDetailsProps {
@@ -79,9 +80,17 @@ export default function TicketPanel(props: Props): JSX.Element {
   }, [tabRequest])
   // Another card: stay on the same kind of tab, but a document of the last ticket means "its spec".
   useEffect(() => {
-    setTab((t) => (t === 'run' || t === 'ticket' ? t : 'spec'))
+    setTab((t) => (t === 'run' || t === 'ticket' || t === 'review' ? t : 'spec'))
   }, [issue?.id])
-  const linear = !!issue && tab !== 'run'
+  // A ticket is "in a PR" while one of its pull requests is open (or a draft); merged or closed ones
+  // have nothing left to review.
+  const openPrs = (issue?.pullRequests ?? []).filter((p) => p.status === 'open' || p.status === 'draft')
+  const inPr = openPrs.length > 0
+  useEffect(() => {
+    if (!inPr) setTab((t) => (t === 'review' ? 'run' : t))
+  }, [inPr])
+  const reviewing = !!issue && inPr && tab === 'review'
+  const linear = !!issue && tab !== 'run' && !reviewing
 
   const sig = issue ? JSON.stringify(issue) : ''
   const { detail, error, loading, reload } = useIssueDetail(issue?.id ?? null, sig, linear)
@@ -156,8 +165,36 @@ export default function TicketPanel(props: Props): JSX.Element {
   // Until the details are loaded the documents aren't known: offer "Spec" when the board says there is one.
   const docTabs = d ? docs.map((x) => ({ id: x.id, title: x.title })) : issue?.hasSpec !== false || tab === 'spec' ? [{ id: 'spec', title: 'Spec' }] : []
   const doc = tab === 'spec' ? spec : docs.find((x) => x.id === tab)
-  const tabOn = (id: string): boolean => tab === id || (id !== 'run' && id !== 'ticket' && doc?.id === id) || (id === 'spec' && tab === 'spec')
+  const tabOn = (id: string): boolean => tab === id || (id !== 'run' && id !== 'ticket' && id !== 'review' && doc?.id === id) || (id === 'spec' && tab === 'spec')
   const identifier = issue?.identifier ?? run?.identifier ?? ''
+  const onFile = docTabs.some((x) => tabOn(x.id))
+  const fileName = onFile ? (docTabs.find((x) => tabOn(x.id))?.title ?? '') : ''
+
+  // Files: the ticket's documents (spec, plan, …) in one dropdown instead of a tab each.
+  const filesBtn = useRef<HTMLButtonElement>(null)
+  const [filesAt, setFilesAt] = useState<{ top: number; right: number } | null>(null)
+  useEffect(() => {
+    if (!filesAt) return
+    const close = (e: Event): void => {
+      if (e instanceof KeyboardEvent && e.key !== 'Escape') return
+      if (e instanceof MouseEvent && (e.target as Element | null)?.closest?.('.files-menu, .files-tab')) return
+      setFilesAt(null)
+    }
+    window.addEventListener('mousedown', close)
+    window.addEventListener('keydown', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [filesAt])
+  useEffect(() => setFilesAt(null), [issue?.id])
+  function toggleFiles(): void {
+    if (filesAt) return setFilesAt(null)
+    const r = filesBtn.current?.getBoundingClientRect()
+    if (r) setFilesAt({ top: r.bottom + 6, right: window.innerWidth - r.right })
+  }
 
   const title = d?.title ?? issue?.title ?? run?.title ?? ''
   const tone = run ? STATUS_TONE[run.status] : 'idle'
@@ -194,9 +231,59 @@ export default function TicketPanel(props: Props): JSX.Element {
             <button type="button" role="tab" aria-selected={tab === 'ticket'} className={tab === 'ticket' ? 'on' : ''} onClick={() => setTab('ticket')}>
               Ticket
             </button>
+            {docTabs.length > 0 && (
+              <button
+                ref={filesBtn}
+                type="button"
+                role="tab"
+                aria-selected={onFile}
+                aria-haspopup="menu"
+                aria-expanded={!!filesAt}
+                className={`files-tab${onFile ? ' on' : ''}`}
+                onClick={toggleFiles}
+                title={onFile ? `Files: ${fileName}` : "The ticket's files (spec, plan, …)"}
+              >
+                Files
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+            )}
+            {/* Code review: last, set off by a thin divider, only while a pull request is open. */}
+            {inPr && (
+              <button type="button" role="tab" aria-selected={tab === 'review'} className={`cr-tab${tab === 'review' ? ' on' : ''}`} onClick={() => setTab('review')} title="Code review" aria-label="Code review">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="6" cy="6" r="2.5" />
+                  <circle cx="18" cy="18" r="2.5" />
+                  <path d="M6 8.5V21M13 6h3a2 2 0 0 1 2 2v7.5" />
+                  <path d="m15.5 3.5-2.5 2.5 2.5 2.5" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
+        {filesAt && (
+          <div className="files-menu" role="menu" style={{ top: filesAt.top, right: filesAt.right }}>
             {docTabs.map((x) => (
-              <button key={x.id} type="button" role="tab" aria-selected={tabOn(x.id)} className={tabOn(x.id) ? 'on' : ''} onClick={() => setTab(x.id)} title={x.title}>
-                {x.title}
+              <button
+                key={x.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={tabOn(x.id)}
+                className={tabOn(x.id) ? 'on' : ''}
+                onClick={() => {
+                  setTab(x.id)
+                  setFilesAt(null)
+                }}
+                title={x.title}
+              >
+                <DocIcon />
+                <span className="t">{x.title}</span>
+                {tabOn(x.id) && (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="m5 12 5 5 9-10" />
+                  </svg>
+                )}
               </button>
             ))}
           </div>
@@ -233,7 +320,13 @@ export default function TicketPanel(props: Props): JSX.Element {
         {issue && <PrStrip prs={issue.pullRequests} openUrl={onOpenLinear} />}
       </div>
 
-      {!linear && <RunDetails {...props} />}
+      {!linear && !reviewing && <RunDetails {...props} />}
+
+      {reviewing && issue && (
+        <div className="glimpse-body cr-panel" role="tabpanel">
+          <CodeReview prs={openPrs} onOpen={onOpenLinear} />
+        </div>
+      )}
 
       {linear && issue && (
         <div className="glimpse-body" role="tabpanel">

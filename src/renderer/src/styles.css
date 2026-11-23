@@ -2280,3 +2280,137 @@ button.prop:disabled:hover { background: var(--tag-bg); color: var(--tag); }
 .board-row > .ticket-panel.drawer.expanded { width: min(1100px, calc(100% - 120px)); max-width: none; }
 .glimpse-resize::after { content: ''; position: absolute; left: 1px; top: 50%; width: 4px; height: 36px; margin-top: -18px; border-radius: 2px; background: var(--line-3); opacity: .7; }
 .glimpse-resize:hover::after { background: var(--accent, var(--line-3)); opacity: 1; }
+
+/* ---- Code review tab ---- */
+.ticket-panel .glimpse-body.cr-panel { padding: 0; display: flex; flex-direction: column; }
+.cr { display: flex; flex-direction: column; min-height: 100%; }
+.cr-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 3; background: var(--surface); }
+.cr-top .seg-tabs button { height: 24px; font-size: 12px; }
+.cr-sum { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.cr-sum .mono { font-size: 11px; color: var(--text-2); }
+.cr-dot { color: var(--line-3); }
+.cr-add { color: var(--ok); font-family: var(--font-mono); font-size: 11px; }
+.cr-del { color: var(--bad); font-family: var(--font-mono); font-size: 11px; }
+.cr > .note.warn, .cr > .empty { margin: 12px 16px; }
+
+.cr-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.cr-list { border-bottom: 1px solid var(--line); padding: 8px 8px 6px; max-height: 190px; overflow: auto; flex: none; }
+.cr-filter { width: 100%; height: 28px; font-size: 12px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--input-line); background: var(--well); color: var(--text); margin-bottom: 4px; }
+.cr-list ul { list-style: none; margin: 0; padding: 0; }
+.cr-list li > button { width: 100%; display: flex; align-items: center; gap: 8px; padding: 4px 6px; border: 0; background: transparent; border-radius: 5px; color: var(--text-2); font-size: 12px; text-align: left; cursor: pointer; }
+.cr-list li > button:hover { background: var(--hover); }
+.cr-list li.on > button { background: var(--sel-bg); color: var(--text); }
+.cr-list li.viewed .cr-name { opacity: .55; }
+.cr-list li.note { padding: 6px; }
+.cr-name { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 6px; overflow: hidden; white-space: nowrap; }
+.cr-base { flex: none; }
+.cr-dir { color: var(--muted); overflow: hidden; text-overflow: ellipsis; font-size: 11px; direction: rtl; text-align: left; }
+.cr-n { display: inline-flex; gap: 6px; flex: none; }
+.cr-st { flex: none; width: 16px; height: 16px; border-radius: 4px; display: inline-grid; place-items: center; font: 600 10px/1 var(--font-mono); color: var(--muted); background: var(--hover-2); }
+.cr-st.add { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.cr-st.del { color: var(--bad); background: color-mix(in srgb, var(--bad) 16%, transparent); }
+.cr-st.mod { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.cr-st.ren { color: var(--accent-ink); background: var(--accent-soft); }
+
+.cr-files { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.cr-file { border: 1px solid var(--line); border-radius: 8px; background: var(--card); overflow: clip; scroll-margin-top: 56px; }
+.cr-file-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 6px; background: var(--surface-2); border-bottom: 1px solid var(--line); position: sticky; top: 45px; z-index: 2; }
+.cr-file:not(:has(.cr-diff-wrap, .cr-nodiff)) .cr-file-head { border-bottom: 0; }
+.cr-fold { border: 0; background: transparent; color: var(--muted); width: 22px; height: 22px; display: grid; place-items: center; border-radius: 4px; cursor: pointer; }
+.cr-fold:hover { background: var(--hover-2); color: var(--text); }
+.cr-fold svg { transition: transform .12s; }
+.cr-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 12px; }
+.cr-viewed { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); cursor: pointer; flex: none; padding: 2px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+.cr-file.viewed .cr-viewed { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+.cr-file.viewed .cr-path { color: var(--muted); }
+.cr-nodiff { display: block; width: 100%; padding: 12px 14px; font-size: 12px; text-align: left; border: 0; background: transparent; }
+.cr-load { color: var(--accent-ink); cursor: pointer; border-top: 1px solid var(--line); }
+.cr-load:hover { background: var(--hover); }
+
+.cr-diff-wrap { overflow-x: auto; }
+.cr-diff { border-collapse: collapse; width: 100%; font-family: var(--font-mono); font-size: 11.5px; line-height: 18px; color: var(--text-2); tab-size: 4; }
+.cr-diff td { padding: 0; vertical-align: top; }
+.cr-diff .ln { width: 1%; min-width: 38px; padding: 0 8px; text-align: right; color: var(--muted); opacity: .75; user-select: none; white-space: nowrap; }
+.cr-diff .cr-code { white-space: pre; padding: 0 12px 0 6px; }
+.cr-diff .sign { display: inline-block; width: 14px; color: var(--muted); user-select: none; }
+.cr-diff tr.add td, .cr-diff td.add { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.cr-diff tr.add .ln, .cr-diff td.ln.add { background: color-mix(in srgb, var(--ok) 20%, transparent); }
+.cr-diff tr.del td, .cr-diff td.del { background: color-mix(in srgb, var(--bad) 13%, transparent); }
+.cr-diff tr.del .ln, .cr-diff td.ln.del { background: color-mix(in srgb, var(--bad) 20%, transparent); }
+.cr-diff tr.add .sign { color: var(--ok); }
+.cr-diff tr.del .sign { color: var(--bad); }
+.cr-diff tr.hunk td { background: var(--accent-soft); color: var(--accent-ink); padding-top: 3px; padding-bottom: 3px; }
+.cr-diff tr.note td { color: var(--muted); font-style: italic; }
+.cr-diff td.empty { background: var(--well); }
+.cr-diff.split { table-layout: fixed; }
+.cr-diff.split col.lnc { width: 48px; }
+.cr-diff.split .cr-code { white-space: pre-wrap; word-break: break-all; }
+.cr-diff.split td.ln.ctx + td.cr-code.ctx { border-right: 0; }
+.cr-diff.split tr > td:nth-child(2) { border-right: 1px solid var(--line); }
+
+.cr-review { position: sticky; bottom: 0; z-index: 3; margin-top: auto; padding: 10px 16px 12px; border-top: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; gap: 8px; }
+.cr-review textarea { width: 100%; resize: vertical; min-height: 54px; max-height: 240px; font: 13px/1.45 inherit; font-family: inherit; color: var(--text); background: var(--well); border: 1px solid var(--input-line); border-radius: 6px; padding: 8px 10px; }
+.cr-review textarea:focus { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-glow); }
+.cr-review-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cr-review-row .note { font-size: 12px; }
+.cr-link { border: 0; background: transparent; color: var(--muted); font-size: 12px; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.cr-link:hover { color: var(--link-hover); }
+
+/* Wide panel (expanded): the file list sits beside the diffs and stays put while they scroll. */
+@container (min-width: 860px) {
+  .cr-body { flex-direction: row; align-items: flex-start; }
+  .cr-list { width: 260px; max-height: calc(100vh - 260px); position: sticky; top: 49px; border-bottom: 0; border-right: 1px solid var(--line); }
+  .cr-files { flex: 1 1 auto; }
+  .cr-file { scroll-margin-top: 60px; }
+}
+.seg-tabs button.cr-tab { padding: 0 8px; display: inline-grid; place-items: center; position: relative; margin-left: 5px; overflow: visible; }
+.seg-tabs button.cr-tab::before { content: ''; position: absolute; left: -4px; top: 5px; bottom: 5px; width: 1px; background: var(--line-3); }
+.seg-tabs button.files-tab { display: inline-flex; align-items: center; gap: 4px; }
+.seg-tabs button.files-tab svg { opacity: .7; }
+.files-menu { position: fixed; z-index: 60; min-width: 180px; max-width: 320px; max-height: 60vh; overflow: auto; padding: 4px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--menu); box-shadow: var(--drawer-shadow, 0 8px 24px rgba(0, 0, 0, .25)); display: flex; flex-direction: column; gap: 1px; }
+.files-menu button { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text-2); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.files-menu button:hover { background: var(--hover-2); color: var(--text); }
+.files-menu button.on { color: var(--text); }
+.files-menu button .t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-menu button > svg:last-child:not(:first-child) { color: var(--accent); flex: none; }
+
+/* Code review layout: header, then the file list and the diffs each scrolling on their own, then the
+   review footer, always at the bottom. */
+.ticket-panel .glimpse-body.cr-panel { overflow: hidden; min-height: 0; }
+.cr { height: 100%; min-height: 0; }
+.cr-top { position: static; flex: none; }
+.cr-msg { margin: 12px 16px; }
+.cr-body { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.cr-files { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.cr-file { scroll-margin-top: 0; }
+.cr-file-head { top: 0; }
+.cr-review { position: static; flex: none; margin-top: 0; box-shadow: 0 -4px 12px rgba(0, 0, 0, .06); }
+@container (min-width: 860px) {
+  .cr-body { align-items: stretch; }
+  .cr-list { position: static; max-height: none; height: auto; overflow: auto; }
+}
+.cr-notes { flex: none; min-width: 18px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--accent-soft); color: var(--accent-ink); font: 600 10px/16px var(--font-mono); text-align: center; }
+
+/* Line comments */
+.cr-diff td.cr-code { position: relative; }
+.cr-add-btn { position: absolute; left: -10px; top: 1px; width: 18px; height: 16px; border: 0; border-radius: 4px; background: var(--accent); color: var(--on-accent); font: 700 13px/16px var(--font-mono); padding: 0; cursor: pointer; opacity: 0; transform: scale(.8); transition: opacity .08s, transform .08s; z-index: 1; }
+.cr-diff tr:hover .cr-add-btn, .cr-diff.split td.cr-code:hover .cr-add-btn, .cr-add-btn:focus-visible { opacity: 1; transform: none; }
+.cr-diff.split tr:hover .cr-add-btn { opacity: 0; }
+.cr-diff.split tr:hover td.cr-code:hover .cr-add-btn { opacity: 1; }
+.cr-diff.unified td.cr-code { padding-left: 14px; }
+.cr-diff.split td.cr-code { padding-left: 12px; }
+.cr-diff tr.sel td, .cr-diff td.sel { background: color-mix(in srgb, var(--warn) 22%, transparent) !important; }
+.cr-diff tr.cr-extra-row > td { background: var(--surface); padding: 8px 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); white-space: normal; }
+.cr-extras { display: flex; flex-direction: column; gap: 8px; max-width: 760px; font-family: var(--font-sans, inherit); }
+.cr-thread { border: 1px solid var(--line); border-radius: 8px; background: var(--card); padding: 8px 10px; font-family: system-ui, sans-serif; font-size: 13px; color: var(--text); }
+.cr-thread.draft { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.cr-thread.editor { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-glow); }
+.cr-thread-range { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.cr-comment + .cr-comment { border-top: 1px solid var(--line-soft); margin-top: 8px; padding-top: 8px; }
+.cr-comment-head { display: flex; align-items: baseline; gap: 8px; font-size: 12px; margin-bottom: 2px; }
+.cr-comment-body { font-size: 13px; line-height: 1.5; }
+.cr-comment-body > :first-child { margin-top: 0; }
+.cr-comment-body > :last-child { margin-bottom: 0; }
+.cr-thread textarea { width: 100%; resize: vertical; min-height: 64px; font-family: inherit; font-size: 13px; line-height: 1.45; color: var(--text); background: var(--well); border: 1px solid var(--input-line); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; }
+.cr-thread textarea:focus { outline: none; border-color: var(--accent-line); }
+.cr-pending { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 11px; font-weight: 600; color: var(--warn-text); background: var(--warn-bg); border: 1px solid var(--warn-line); }

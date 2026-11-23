@@ -1,4 +1,4 @@
-import type { PrCheck, PrStatus } from '../shared/types'
+import type { PrCheck, PrDraftComment, PrFile, PrFiles, PrLineComment, PrReviewEvent, PrStatus } from '../shared/types'
 import { log } from './log'
 
 // Pull request status and merging, with this machine's GitHub token (Settings › GitHub), the same way
@@ -300,4 +300,102 @@ export async function cancelPrChecks(token: string | null, url: string): Promise
   const other = (st?.statuses ?? []).filter((s) => s.state === 'pending').length
   cache.delete(url)
   return { cancelled, other }
+}
+
+// The pull request's changed files with their diffs, for the Code review tab. GitHub returns up to
+// 3000 files, 100 a page; a file whose diff is too big comes back without a patch.
+export async function fetchPrFiles(token: string | null, url: string): Promise<PrFiles> {
+  const m = PR_URL.exec(url)
+  if (!m) throw new Error('Not a GitHub pull request link.')
+  const [, owner, name, number] = m
+  const repo = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`
+  const pr = (await api(token, 'GET', `${repo}/pulls/${number}`)) as {
+    title?: string
+    head?: { sha?: string; ref?: string }
+    base?: { ref?: string }
+    additions?: number
+    deletions?: number
+    changed_files?: number
+    user?: { login?: string }
+  }
+  type RawFile = { filename: string; previous_filename?: string; status: string; additions: number; deletions: number; patch?: string }
+  const files: PrFile[] = []
+  for (let page = 1; page <= 30; page++) {
+    const batch = (await api(token, 'GET', `${repo}/pulls/${number}/files?per_page=100&page=${page}`)) as unknown as RawFile[]
+    if (!Array.isArray(batch)) break
+    for (const f of batch) {
+      files.push({
+        path: f.filename,
+        ...(f.previous_filename ? { previousPath: f.previous_filename } : {}),
+        status: (['added', 'removed', 'modified', 'renamed', 'copied', 'changed', 'unchanged'].includes(f.status) ? f.status : 'modified') as PrFile['status'],
+        additions: f.additions ?? 0,
+        deletions: f.deletions ?? 0,
+        ...(typeof f.patch === 'string' ? { patch: f.patch } : {})
+      })
+    }
+    if (batch.length < 100) break
+  }
+  // Review comments already on the pull request, to show beside their lines.
+  type RawComment = { id: number; path: string; side?: string; line?: number | null; start_line?: number | null; body?: string; created_at?: string; user?: { login?: string }; in_reply_to_id?: number }
+  const comments: PrLineComment[] = []
+  for (let page = 1; page <= 10; page++) {
+    const batch = (await api(token, 'GET', `${repo}/pulls/${number}/comments?per_page=100&page=${page}`).catch(() => [])) as unknown as RawComment[]
+    if (!Array.isArray(batch)) break
+    for (const c of batch) {
+      comments.push({
+        id: c.id,
+        path: c.path,
+        side: c.side === 'LEFT' ? 'LEFT' : 'RIGHT',
+        line: typeof c.line === 'number' ? c.line : null,
+        ...(typeof c.start_line === 'number' ? { startLine: c.start_line } : {}),
+        author: c.user?.login ?? '',
+        body: c.body ?? '',
+        createdAt: c.created_at ?? '',
+        ...(c.in_reply_to_id ? { replyTo: c.in_reply_to_id } : {})
+      })
+    }
+    if (batch.length < 100) break
+  }
+  return {
+    url,
+    title: pr.title ?? '',
+    headSha: pr.head?.sha ?? '',
+    headRef: pr.head?.ref ?? '',
+    baseRef: pr.base?.ref ?? '',
+    author: pr.user?.login ?? '',
+    additions: pr.additions ?? files.reduce((n, f) => n + f.additions, 0),
+    deletions: pr.deletions ?? files.reduce((n, f) => n + f.deletions, 0),
+    changedFiles: pr.changed_files ?? files.length,
+    files,
+    comments
+  }
+}
+
+// Submits a review on the pull request: approve, request changes or just comment. Needs the token's
+// Pull requests permission set to Read and write. GitHub doesn't let you approve your own pull request.
+export async function submitPrReview(token: string | null, url: string, event: PrReviewEvent, body: string, comments: PrDraftComment[] = [], commitId?: string): Promise<void> {
+  const m = PR_URL.exec(url)
+  if (!m) throw new Error('Not a GitHub pull request link.')
+  const [, owner, name, number] = m
+  const repo = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`
+  try {
+    const lineComments = comments.map((c) => ({
+      path: c.path,
+      body: c.body,
+      side: c.side,
+      line: c.line,
+      ...(c.startLine && c.startLine !== c.line ? { start_line: c.startLine, start_side: c.startSide ?? c.side } : {})
+    }))
+    await api(token, 'POST', `${repo}/pulls/${number}/reviews`, {
+      event,
+      ...(body.trim() ? { body: body.trim() } : {}),
+      ...(commitId ? { commit_id: commitId } : {}),
+      ...(lineComments.length ? { comments: lineComments } : {})
+    })
+  } catch (err) {
+    const msg = (err as Error).message
+    if (/not accessible|forbidden|403/i.test(msg)) throw new Error("GitHub won't let this token review. Give it Pull requests: Read and write in Settings › GitHub.")
+    throw err
+  }
+  cache.delete(url)
 }

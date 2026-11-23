@@ -265,6 +265,53 @@ export interface PrCheck {
   state: 'pending' | 'success' | 'failure' | 'skipped'
   url: string | null
 }
+// A pull request's changed files, for the Code review tab. `patch` is GitHub's unified diff for the
+// file (hunks only); it's missing for binary files and diffs too big for GitHub to send.
+export interface PrFile {
+  path: string
+  previousPath?: string // set when renamed
+  status: 'added' | 'removed' | 'modified' | 'renamed' | 'copied' | 'changed' | 'unchanged'
+  additions: number
+  deletions: number
+  patch?: string
+}
+export interface PrFiles {
+  url: string
+  title: string
+  headSha: string
+  headRef: string
+  baseRef: string
+  author: string
+  additions: number
+  deletions: number
+  changedFiles: number
+  files: PrFile[]
+  comments: PrLineComment[] // review comments already on the pull request
+}
+export type PrReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'
+// A comment on a line (or a range of lines) of a file's diff. LEFT is the old side (removed lines),
+// RIGHT the new side (added and unchanged lines). `line` is null when the comment is outdated.
+export interface PrLineComment {
+  id: number
+  path: string
+  side: 'LEFT' | 'RIGHT'
+  line: number | null
+  startLine?: number | null
+  author: string
+  body: string
+  createdAt: string
+  replyTo?: number
+}
+// A comment written here and sent with the review.
+export interface PrDraftComment {
+  path: string
+  side: 'LEFT' | 'RIGHT'
+  line: number
+  startSide?: 'LEFT' | 'RIGHT'
+  startLine?: number
+  body: string
+}
+
 export interface PrStatus {
   url: string
   number: number
@@ -597,6 +644,8 @@ export interface NightShiftApi {
   getPrStatuses?(urls: string[], refresh?: boolean): Promise<{ statuses: Record<string, PrStatus>; error?: string }>
   mergePr?(url: string): Promise<{ ok: true } | { error: string }> // merge with the repo's method and delete the remote branch
   cancelPrChecks?(url: string): Promise<{ ok: true; cancelled: number; other: number } | { error: string }> // cancel the PR's running GitHub Actions runs
+  getPrFiles?(url: string): Promise<PrFiles | { error: string }> // changed files and diffs, for the Code review tab
+  reviewPr?(url: string, event: PrReviewEvent, body: string, comments?: PrDraftComment[], commitId?: string): Promise<{ ok: true } | { error: string }> // approve, request changes or comment, with line comments
   linearImage?(url: string): Promise<string | null> // data: URL for an image uploaded to Linear
   getUsage?(days: number, refresh?: boolean): Promise<UsageReport>
   getTicketStats?(days: number): Promise<TicketStats>

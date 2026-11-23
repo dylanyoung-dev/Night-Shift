@@ -426,7 +426,7 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
               />
             </label>
             <p className="note">
-              Make a fine-grained token on GitHub (Settings › Developer settings › Personal access tokens) for the repository, with: Pull requests: Read and write, Contents: Read and write (to delete the branch after a merge), Actions: Read and write (to see checks and stop running ones) and Commit statuses: Read. Read-only is enough if you only want to see status. It stays on this machine and isn&apos;t shared or exported.
+              Make a fine-grained token on GitHub (Settings › Developer settings › Personal access tokens) for the repository, with: Pull requests: Read and write (to merge and to review in the Code review tab), Contents: Read and write (to delete the branch after a merge), Actions: Read and write (to see checks and stop running ones) and Commit statuses: Read. Read-only is enough if you only want to see status. It stays on this machine and isn&apos;t shared or exported.
             </p>
             {settings.hasGithubToken && !ghToken && (
               <div>

@@ -2,14 +2,14 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, No
 import { hostname } from 'os'
 import { basename, dirname, join } from 'path'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'fs'
-import type { BoardData, HostMachineSettings, ImportGroupKey, IssueUpdate, LinearIssue, LinearState, RemoteTarget, Run, SaveConflict, Settings, SettingsUpdate, SharedSettings, StepSet, StepsFile } from '../shared/types'
+import type { BoardData, HostMachineSettings, ImportGroupKey, IssueUpdate, LinearIssue, LinearState, PrDraftComment, RemoteTarget, Run, SaveConflict, Settings, SettingsUpdate, SharedSettings, StepSet, StepsFile } from '../shared/types'
 import { globalRunKey, isActiveRun } from '../shared/types'
 import { getGithubToken, getLinearKey, getSettings, migrateLooseSecrets, updateSettings } from './settings'
 import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, removeLabelByName, updateIssue, fetchIssueDetail, fetchIssueRelations, fetchLinearImage, fetchIssueStates } from './linear'
 import { globalSet, loadSteps, parseSteps, saveSteps, setForState, setsForState, starterSteps, stepsFilePath, stringifySteps } from './steps'
 import { Runner, resolveWorktreePath } from './runner'
 import { cleanupWorktrees } from './worktreeCleanup'
-import { fetchPrStatuses, mergePr, cancelPrChecks } from './github'
+import { fetchPrStatuses, mergePr, cancelPrChecks, fetchPrFiles, submitPrReview } from './github'
 import { getUsage, usageProgress } from './usage'
 import { cachedTicketStats, refreshTicketStats, TICKET_STATS_EVERY } from './ticketStats'
 import { checkLimits, getLimits, loadLimits, onLimitsChange } from './limits'
@@ -814,6 +814,37 @@ function registerIpc(): void {
       const r = await cancelPrChecks(getGithubToken(), url)
       log.info(`cancelled ${r.cancelled} workflow runs on ${url}`)
       return { ok: true, ...r }
+    } catch (err) {
+      return { error: (err as Error).message }
+    }
+  })
+  ipcMain.handle('github:files', async (_e, url: unknown) => {
+    if (typeof url !== 'string' || !boardPrs().has(url)) return { error: 'That pull request is not linked to a ticket on the board.' }
+    try {
+      return await fetchPrFiles(getGithubToken(), url)
+    } catch (err) {
+      return { error: (err as Error).message }
+    }
+  })
+  ipcMain.handle('github:review', async (_e, url: unknown, event: unknown, body: unknown, comments: unknown, commitId: unknown) => {
+    if (typeof url !== 'string' || !boardPrs().has(url)) return { error: 'That pull request is not linked to a ticket on the board.' }
+    if (event !== 'APPROVE' && event !== 'REQUEST_CHANGES' && event !== 'COMMENT') return { error: 'Unknown review type.' }
+    const text = typeof body === 'string' ? body.slice(0, 60_000) : ''
+    const side = (v: unknown): 'LEFT' | 'RIGHT' | null => (v === 'LEFT' || v === 'RIGHT' ? v : null)
+    const lines: PrDraftComment[] = (Array.isArray(comments) ? comments : []).slice(0, 200).flatMap((c) => {
+      const r = (c ?? {}) as Record<string, unknown>
+      const s = side(r.side)
+      const line = Number(r.line)
+      if (typeof r.path !== 'string' || !s || !Number.isInteger(line) || line < 1 || typeof r.body !== 'string' || !r.body.trim()) return []
+      const start = Number(r.startLine)
+      return [{ path: r.path, side: s, line, body: r.body.slice(0, 60_000), ...(Number.isInteger(start) && start >= 1 && start < line ? { startLine: start, startSide: side(r.startSide) ?? s } : {}) }]
+    })
+    if (event !== 'APPROVE' && !text.trim() && !lines.length) return { error: 'Write a comment first.' }
+    if (event === 'REQUEST_CHANGES' && !text.trim() && !lines.length) return { error: 'Say what to change.' }
+    try {
+      await submitPrReview(getGithubToken(), url, event, text, lines, typeof commitId === 'string' && /^[0-9a-f]{7,40}$/.test(commitId) ? commitId : undefined)
+      log.info(`reviewed ${url}: ${event}${lines.length ? ` with ${lines.length} line comments` : ''}`)
+      return { ok: true }
     } catch (err) {
       return { error: (err as Error).message }
     }
