@@ -23,26 +23,11 @@ interface Props extends RunDetailsProps {
 
 // One width for every tab, so opening the ticket or spec doesn't resize the panel. It is a share of
 // the window (it grows on a wide screen), can be dragged by its left edge, or switched to the expanded
-// width with the button in the header. Min and max are in pixels; the board keeps at least BOARD_MIN.
-const WIDTH = { key: 'nightshift.panelShare', min: 380, max: 1100, def: 0.3125 } // about 600px on a 1920px screen
-const EXPANDED_KEY = 'nightshift.panelExpanded'
+// width with the button in the header. Neither is remembered: each time the panel opens it starts at
+// the normal width. Min and max are in pixels; the board keeps at least BOARD_MIN.
+const WIDTH = { min: 380, max: 1100, def: 0.3125 } // about 600px on a 1920px screen
 const EXPANDED_MAX = 1800
 const BOARD_MIN = 520
-function savedShare(): number {
-  try {
-    const n = Number(localStorage.getItem(WIDTH.key))
-    return n > 0.05 && n < 0.95 ? n : WIDTH.def
-  } catch {
-    return WIDTH.def
-  }
-}
-function savedExpanded(): boolean {
-  try {
-    return localStorage.getItem(EXPANDED_KEY) === '1'
-  } catch {
-    return false
-  }
-}
 function toPx(share: number, windowW: number): number {
   return Math.round(Math.max(WIDTH.min, Math.min(WIDTH.max, windowW - BOARD_MIN, share * windowW)))
 }
@@ -120,16 +105,8 @@ export default function TicketPanel(props: Props): JSX.Element {
   const busy = refreshing || (linear && loading)
 
   const windowW = useWindowWidth()
-  const [share, setShare] = useState(savedShare)
-  const [expanded, setExpandedState] = useState(savedExpanded)
-  function setExpanded(on: boolean): void {
-    setExpandedState(on)
-    try {
-      localStorage.setItem(EXPANDED_KEY, on ? '1' : '0')
-    } catch {
-      /* per-viewer nicety only */
-    }
-  }
+  const [share, setShare] = useState(WIDTH.def)
+  const [expanded, setExpanded] = useState(false)
   const width = expanded ? Math.max(WIDTH.min, Math.min(EXPANDED_MAX, windowW - BOARD_MIN)) : toPx(share, windowW)
   function startResize(e: React.PointerEvent<HTMLDivElement>): void {
     e.preventDefault()
@@ -140,21 +117,14 @@ export default function TicketPanel(props: Props): JSX.Element {
     document.body.classList.add('resizing')
     // Dragging goes back to a normal width, starting from where the panel is now.
     setExpanded(false)
-    let next = share
     const move = (ev: PointerEvent): void => {
       const w = Math.max(WIDTH.min, Math.min(WIDTH.max, window.innerWidth - BOARD_MIN, startW + (startX - ev.clientX)))
-      next = w / window.innerWidth
-      setShare(next)
+      setShare(w / window.innerWidth)
     }
     const up = (): void => {
       target.removeEventListener('pointermove', move)
       target.removeEventListener('pointerup', up)
       document.body.classList.remove('resizing')
-      try {
-        localStorage.setItem(WIDTH.key, next.toFixed(4))
-      } catch {
-        /* per-viewer nicety only */
-      }
     }
     target.addEventListener('pointermove', move)
     target.addEventListener('pointerup', up)
