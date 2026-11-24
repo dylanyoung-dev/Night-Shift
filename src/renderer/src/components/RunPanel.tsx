@@ -63,11 +63,20 @@ function StepsInfo({ run }: { run: Run }): JSX.Element {
 // the live log, and a footer with the reply box and the actions that can be started for the ticket's state.
 export default function RunDetails({ issue, run, history, log, sets, onStart, onStop, onOpenLog }: RunDetailsProps): JSX.Element {
   const logRef = useRef<HTMLPreElement>(null)
-
+  // Follows new output only while you're at the bottom, so scrolling up to read isn't undone by the
+  // next line. Another run (or ticket) starts at the bottom again.
+  const atBottom = useRef(true)
+  useEffect(() => {
+    atBottom.current = true
+  }, [run?.id])
   useEffect(() => {
     const el = logRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (el && atBottom.current) el.scrollTop = el.scrollHeight
   }, [log])
+  const onLogScroll = (): void => {
+    const el = logRef.current
+    if (el) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+  }
 
   const active = run && isActiveRun(run.status)
   const step = run && run.currentStep >= 0 ? run.steps[run.currentStep] : undefined
@@ -156,7 +165,7 @@ export default function RunDetails({ issue, run, history, log, sets, onStart, on
             <div className="sec-row">
               <div className="sec-label">Live log</div>
             </div>
-            <pre className="log live-log" ref={logRef} tabIndex={0} aria-label="Live log output">
+            <pre className="log live-log" ref={logRef} tabIndex={0} aria-label="Live log output" onScroll={onLogScroll}>
               {stripAnsi(log) ? <LogText text={stripAnsi(log)} /> : 'No output yet.'}
             </pre>
           </section>

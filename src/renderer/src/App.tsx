@@ -22,6 +22,8 @@ import { useWide, useWideSidebar } from './useWide'
 
 const api = window.nightShift
 
+const LIVE_LOG_CHARS = 400_000 // about the last few thousand lines; Open log shows all of it
+
 export default function App(): JSX.Element {
   const [view, setView] = useState<View>('board')
   const wide = useWide()
@@ -31,6 +33,24 @@ export default function App(): JSX.Element {
   usePrPolling(board.issues) // live pull request status from GitHub for the cards
   const [runs, setRuns] = useState<Run[]>([])
   const [logs, setLogs] = useState<Record<string, string>>({})
+  // The panel's live log starts from the whole log file (read once, from the host when connected to one),
+  // then new output is added as it comes. Output that arrives while the file is read is kept here and
+  // joined on without repeating what the file already had.
+  const seedingLogs = useRef(new Map<string, string>())
+  function seedLog(runId: string): void {
+    if (logs[runId] !== undefined || seedingLogs.current.has(runId)) return
+    seedingLogs.current.set(runId, '')
+    void api
+      .readLog(runId)
+      .catch(() => '')
+      .then((full) => {
+        const extra = seedingLogs.current.get(runId) ?? ''
+        seedingLogs.current.delete(runId)
+        let k = Math.min(extra.length, full.length)
+        while (k > 0 && !full.endsWith(extra.slice(0, k))) k--
+        setLogs((prev) => ({ ...prev, [runId]: (full + extra.slice(k)).slice(-LIVE_LOG_CHARS) }))
+      })
+  }
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null)
   const [panelTab, setPanelTab] = useState<{ tab: PanelTab; at: number } | null>(null) // a tab the card menu asked the panel to show
   const [message, setMessage] = useState<string | null>(null)
@@ -198,9 +218,11 @@ export default function App(): JSX.Element {
       setSwitchingTo(null)
     })
     const offRuns = api.onRuns((r) => setRuns([...r]))
-    const offOut = api.onRunOutput((runId, chunk) =>
-      setLogs((prev) => ({ ...prev, [runId]: ((prev[runId] ?? '') + chunk).slice(-20000) }))
-    )
+    const offOut = api.onRunOutput((runId, chunk) => {
+      const pending = seedingLogs.current.get(runId)
+      if (pending !== undefined) seedingLogs.current.set(runId, pending + chunk)
+      setLogs((prev) => (prev[runId] === undefined ? prev : { ...prev, [runId]: (prev[runId] + chunk).slice(-LIVE_LOG_CHARS) }))
+    })
     const timer = setInterval(() => setTick((t) => t + 1), 1000) // keeps durations moving
     return () => {
       offRemote?.()
@@ -232,6 +254,9 @@ export default function App(): JSX.Element {
 
   const issue = board.issues.find((i) => i.id === selectedIssue) ?? null
   const run = selectedIssue ? latestRun.get(selectedIssue) ?? null : null
+  useEffect(() => {
+    if (run) seedLog(run.id)
+  }, [run?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   const activeRuns = runs.filter((r) => isActiveRun(r.status))
   const needsYou = runs.filter((r) => r.status === 'waiting')
 
