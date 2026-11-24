@@ -34,7 +34,7 @@ export interface HostOps {
   continueRun(runId: string, text: string): Result<{ ok: true }>
   usage(days: number, refresh: boolean): Promise<unknown>
   usageProgress(): unknown
-  ticketStats(days: number, projectId: string | null): Promise<unknown>
+  ticketStats(days: number, projectId: string | null, refresh?: boolean): Promise<unknown>
   limits(): unknown
   checkLimits(): Promise<unknown>
 }
@@ -342,7 +342,7 @@ export class HostServer {
     }
     if (m === 'GET' && path === '/v1/usage') return send(200, await ops.usage(days, url.searchParams.get('refresh') === '1'))
     if (m === 'GET' && path === '/v1/usage/progress') return send(200, ops.usageProgress() ?? null)
-    if (m === 'GET' && path === '/v1/ticket-stats') return send(200, await ops.ticketStats(days, url.searchParams.get('projectId')))
+    if (m === 'GET' && path === '/v1/ticket-stats') return send(200, await ops.ticketStats(days, url.searchParams.get('projectId'), url.searchParams.get('refresh') === '1'))
     if (m === 'GET' && path === '/v1/limits') return send(200, ops.limits() ?? null)
     if (m === 'POST' && path === '/v1/limits/check') return send(200, (await ops.checkLimits()) ?? null)
     send(404, { error: `No such route: ${m} ${path}` })

@@ -5,13 +5,13 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, sta
 import type { BoardData, HostMachineSettings, ImportGroupKey, IssueUpdate, LinearIssue, LinearState, PrDraftComment, RemoteTarget, Run, SaveConflict, Settings, SettingsUpdate, SharedSettings, StepSet, StepsFile } from '../shared/types'
 import { globalRunKey, isActiveRun } from '../shared/types'
 import { getGithubToken, getLinearKey, getSettings, migrateLooseSecrets, updateSettings } from './settings'
-import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, removeLabelByName, updateIssue, fetchIssueDetail, fetchIssueRelations, fetchLinearImage, fetchIssueStates } from './linear'
+import { addComment, addLabelByName, fetchIssue, fetchIssues, fetchStates, fetchTeamMeta, moveIssue, removeLabelByName, updateIssue, fetchIssueDetail, fetchIssueRelations, fetchLinearImage, fetchIssueStates, editIssueText, currentDocument, sameText, editDocument, uploadToLinear, attachToIssue } from './linear'
 import { globalSet, loadSteps, parseSteps, saveSteps, setForState, setsForState, starterSteps, stepsFilePath, stringifySteps } from './steps'
 import { Runner, resolveWorktreePath } from './runner'
 import { cleanupWorktrees } from './worktreeCleanup'
 import { fetchPrStatuses, mergePr, cancelPrChecks, fetchPrFiles, submitPrReview } from './github'
 import { getUsage, usageProgress } from './usage'
-import { cachedTicketStats, refreshTicketStats, TICKET_STATS_EVERY } from './ticketStats'
+import { cachedTicketStats, onTicketStatsUpdated, refreshTicketStats, TICKET_STATS_EVERY } from './ticketStats'
 import { checkLimits, getLimits, loadLimits, onLimitsChange } from './limits'
 import { installUpdateNow, checkForUpdatesNow, startUpdater, updateState } from './updater'
 import { log } from './log'
@@ -358,8 +358,8 @@ function ticketCtx(projectId: string | null): Parameters<typeof cachedTicketStat
   return { apiKey: getLinearKey() ?? '', teamKey: s.linearTeamKey, projectIds: project?.linearProjectIds, runs: runner.list() }
 }
 
-function ticketStatsHere(days: number, projectId: string | null): ReturnType<typeof cachedTicketStats> {
-  return cachedTicketStats(Math.min(365, Math.max(1, Math.round(Number(days) || 30))), projectId, ticketCtx(projectId))
+function ticketStatsHere(days: number, projectId: string | null, refresh = false): ReturnType<typeof cachedTicketStats> {
+  return cachedTicketStats(Math.min(365, Math.max(1, Math.round(Number(days) || 30))), projectId, ticketCtx(projectId), refresh)
 }
 
 // The whole log file; the window shows the last 4 MB of a bigger one.
@@ -413,7 +413,7 @@ const ops: HostOps = {
   continueRun: (id, text) => runner.continueRun(id, text),
   usage: (days, refresh) => usageHere(days, refresh),
   usageProgress: () => usageProgress(),
-  ticketStats: (days, projectId) => ticketStatsHere(days, projectId),
+  ticketStats: (days, projectId, refresh) => ticketStatsHere(days, projectId, refresh),
   limits: () => getLimits(),
   checkLimits: () => checkLimits(getSettings().repoPath)
 }
@@ -765,6 +765,73 @@ function registerIpc(): void {
     return { ok: true }
   })
   ipcMain.handle('board:refresh', () => refreshBoard())
+  // Editing from the panel. The text checks are loose on purpose: Linear has its own limits.
+  const textEdit = (v: unknown): { title: string; body: string; base: { title: string; body: string }; overwrite: boolean } | string => {
+    const r = (v ?? {}) as Record<string, unknown>
+    const b = (r.base ?? {}) as Record<string, unknown>
+    if (typeof r.title !== 'string' || typeof r.body !== 'string' || typeof b.title !== 'string' || typeof b.body !== 'string') return 'Nothing to save.'
+    if (!r.title.trim()) return 'The title can’t be empty.'
+    if (r.body.length > 500_000) return 'That text is too long for Linear.'
+    return { title: r.title.trim().slice(0, 1000), body: r.body, base: { title: b.title, body: b.body }, overwrite: r.overwrite === true }
+  }
+  const CONFLICT = 'This was changed in Linear since you started editing. Reload to see the new version, or save anyway to replace it.'
+  ipcMain.handle('issue:editText', async (_e, issueId: string, edit: unknown) => {
+    const key = getLinearKey()
+    if (!key) return { error: 'Add your Linear API key in Settings.' }
+    if (!board.issues.some((i) => i.id === issueId)) return { error: 'That ticket is no longer on the board.' }
+    const e = textEdit(edit)
+    if (typeof e === 'string') return { error: e }
+    try {
+      const r = await editIssueText(key, issueId, { title: e.title, description: e.body }, e.base, e.overwrite)
+      if ('conflict' in r) return { conflict: true, error: CONFLICT }
+      log.info(`edited the description of ${board.issues.find((i) => i.id === issueId)?.identifier ?? issueId}`)
+    } catch (err) {
+      return { error: `Linear: ${(err as Error).message}` }
+    }
+    await syncIssue(key, issueId).catch(() => void refreshBoard())
+    return { ok: true }
+  })
+  ipcMain.handle('issue:editDoc', async (_e, issueId: string, documentId: unknown, edit: unknown) => {
+    const key = getLinearKey()
+    if (!key) return { error: 'Add your Linear API key in Settings.' }
+    if (!board.issues.some((i) => i.id === issueId)) return { error: 'That ticket is no longer on the board.' }
+    if (typeof documentId !== 'string' || !documentId) return { error: 'No document to save.' }
+    const e = textEdit(edit)
+    if (typeof e === 'string') return { error: e }
+    try {
+      const cur = await currentDocument(key, documentId)
+      if (cur.issueId !== issueId) return { error: 'That document isn’t attached to this ticket.' }
+      if (!e.overwrite && (!sameText(cur.title, e.base.title) || !sameText(cur.content, e.base.body))) return { conflict: true, error: CONFLICT }
+      await editDocument(key, documentId, { title: e.title, content: e.body })
+      log.info(`edited document "${e.title}" on ${board.issues.find((i) => i.id === issueId)?.identifier ?? issueId}`)
+      return { ok: true }
+    } catch (err) {
+      return { error: `Linear: ${(err as Error).message}` }
+    }
+  })
+  ipcMain.handle('issue:upload', async (_e, issueId: string, file: unknown, attach: unknown) => {
+    const key = getLinearKey()
+    if (!key) return { error: 'Add your Linear API key in Settings.' }
+    if (!board.issues.some((i) => i.id === issueId)) return { error: 'That ticket is no longer on the board.' }
+    const f = (file ?? {}) as { name?: unknown; type?: unknown; bytes?: unknown }
+    if (typeof f.name !== 'string' || !(f.bytes instanceof Uint8Array)) return { error: 'Nothing to upload.' }
+    if (f.bytes.length > 50_000_000) return { error: `${f.name} is over 50 MB.` }
+    const name = f.name.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 200) || 'file'
+    try {
+      const url = await uploadToLinear(key, { name, type: typeof f.type === 'string' ? f.type : '', data: Buffer.from(f.bytes) })
+      log.info(`uploaded ${name} (${Math.round(f.bytes.length / 1024)} KB) to Linear`)
+      if (attach === true) {
+        try {
+          await attachToIssue(key, issueId, url, name)
+        } catch (err) {
+          return { url, attachError: (err as Error).message }
+        }
+      }
+      return { url }
+    } catch (err) {
+      return { error: `Linear: ${(err as Error).message}` }
+    }
+  })
   ipcMain.handle('issue:detail', async (_e, issueId: string) => {
     const key = getLinearKey()
     if (!key) return { error: 'Add your Linear API key in Settings.' }
@@ -885,11 +952,15 @@ function registerIpc(): void {
   ipcMain.handle('usage:get', (_e, days: number, refresh?: boolean) =>
     remoteMode() ? viaHostOrThrow('GET', `/usage?days=${Number(days) || 30}${refresh ? '&refresh=1' : ''}`) : usageHere(days, Boolean(refresh))
   )
-  ipcMain.handle('usage:tickets', (_e, days: number) => {
+  ipcMain.handle('usage:tickets', (_e, days: number, refresh?: boolean) => {
     const projectId = getSettings().activeProjectId
     return remoteMode()
-      ? viaHostOrThrow('GET', `/ticket-stats?days=${Number(days) || 30}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`)
-      : ticketStatsHere(days, projectId)
+      ? viaHostOrThrow('GET', `/ticket-stats?days=${Number(days) || 30}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}${refresh ? '&refresh=1' : ''}`)
+      : ticketStatsHere(days, projectId, Boolean(refresh))
+  })
+  // A background rebuild finished: show it on the usage page now, not on its next ask.
+  onTicketStatsUpdated((days, projectId, stats) => {
+    if (!remoteMode() && projectId === (getSettings().activeProjectId ?? null)) send('ticket-stats', days, stats)
   })
   ipcMain.handle('usage:progress', () => (remoteMode() ? viaHost('GET', '/usage/progress').then((r) => (r && 'error' in (r as object) ? null : r)) : usageProgress()))
   ipcMain.handle('limits:get', () => (remoteMode() ? viaHost('GET', '/limits').then((r) => (r && 'error' in (r as object) ? null : r)) : getLimits()))

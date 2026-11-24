@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { groupLabel, shortLabel } from './FilterBar'
+import { groupLabel, shortLabel } from '../filters'
+import type { SortKey } from '../boardViews'
 import { DEFAULT_FAILURE_LABEL, isActiveRun, type BoardData, type ColumnSettings, type IssueRelation, type IssueUpdate, type LinearIssue, type LinearLabel, type LinearState, type Run, type StepChoice } from '../../../shared/types'
 import IssueMenu, { type MenuMode } from './IssueMenu'
 import ColumnMenu from './ColumnMenu'
@@ -33,6 +34,7 @@ interface Props {
   setsFor(stateName: string): StepChoice[] // the sets of steps (buttons) for a state
   onGlimpse(issueId: string, tab?: 'ticket' | 'spec'): void // show the ticket's details (or its spec) in a side panel
   groupBy?: string | null // label group id (Initiative, Area…): one swimlane per label in it
+  sort?: SortKey // card order in each column
   wide?: boolean // columns share the width; otherwise fixed columns that scroll sideways
 }
 
@@ -468,7 +470,7 @@ function useKeptScroll(key: string): { ref: React.RefObject<HTMLDivElement>; onS
 // Clicks on these aren't "clicking off a ticket".
 const INTERACTIVE = '.card, button, a, input, select, textarea, label, [role="menu"], [role="button"], .issue-menu'
 
-export default function Board({ board, latestRun, runsByIssue, onReorderColumns, columnSettings = {}, onColumnSettings, onOpenLog, selectedIssue, onSelect, onClearSelection, onStart, onUpdate, setsFor, onGlimpse, groupBy, wide = true }: Props): JSX.Element {
+export default function Board({ board, latestRun, runsByIssue, onReorderColumns, columnSettings = {}, onColumnSettings, onOpenLog, selectedIssue, onSelect, onClearSelection, onStart, onUpdate, setsFor, onGlimpse, groupBy, sort = 'activity', wide = true }: Props): JSX.Element {
   const scroll = useKeptScroll(board.project?.id ?? 'team')
   // Uses the event's path, fixed when the click started, rather than walking up from the target: a card
   // can re-render under the pointer (selecting it changes it), leaving the target detached from the card.
@@ -500,26 +502,42 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
   const group = groupBy ? board.team?.labelGroups?.find((g) => g.id === groupBy) : undefined
   const [expanded, setExpanded] = useState<Set<string>>(loadExpanded)
 
-  // In each column: tickets with a run going first, then tickets that have had a run (newest run first
-  // in both), then the rest in Linear's order.
+  // Card order in each column, from the view. The default ('activity'): tickets with a run going first,
+  // then tickets that have had a run (newest run first in both), then the rest in Linear's order.
+  // The others fall back to Linear's order for ties.
   const sortByState = (issues: LinearIssue[]): Map<string, LinearIssue[]> => {
     const tier = (i: LinearIssue): number => {
       const r = latestRun.get(i.id)
       return !r ? 2 : isActiveRun(r.status) ? 0 : 1
     }
+    const prio = (i: LinearIssue): number => (i.priority === 0 ? 5 : i.priority) // no priority last
+    const cmp = (a: LinearIssue, b: LinearIssue): number => {
+      switch (sort) {
+        case 'linear':
+          return a.sortOrder - b.sortOrder
+        case 'priority':
+          return prio(a) - prio(b) || a.sortOrder - b.sortOrder
+        case 'newest':
+          return b.createdAt.localeCompare(a.createdAt)
+        case 'oldest':
+          return a.createdAt.localeCompare(b.createdAt)
+        case 'estimate':
+          return (b.estimate ?? -1) - (a.estimate ?? -1) || a.sortOrder - b.sortOrder
+        default: {
+          const ta = tier(a)
+          const tb = tier(b)
+          if (ta !== tb) return ta - tb
+          if (ta < 2) return (latestRun.get(b.id)?.createdAt ?? 0) - (latestRun.get(a.id)?.createdAt ?? 0)
+          return a.sortOrder - b.sortOrder
+        }
+      }
+    }
     const map = new Map<string, LinearIssue[]>()
     for (const i of issues) map.set(i.stateId, [...(map.get(i.stateId) ?? []), i])
-    for (const list of map.values())
-      list.sort((a, b) => {
-        const ta = tier(a)
-        const tb = tier(b)
-        if (ta !== tb) return ta - tb
-        if (ta < 2) return (latestRun.get(b.id)?.createdAt ?? 0) - (latestRun.get(a.id)?.createdAt ?? 0)
-        return a.sortOrder - b.sortOrder
-      })
+    for (const list of map.values()) list.sort(cmp)
     return map
   }
-  const byState = useMemo(() => sortByState(board.issues), [board.issues, latestRun])
+  const byState = useMemo(() => sortByState(board.issues), [board.issues, latestRun, sort])
 
   // One lane per label in the group (in label-name order), then the tickets without one.
   const lanes = useMemo((): (Lane & { byState: Map<string, LinearIssue[]> })[] | null => {
@@ -536,7 +554,7 @@ export default function Board({ board, latestRun, runsByIssue, onReorderColumns,
       .map(([key, v]) => ({ key, label: v.label, name: v.label ? shortLabel(v.label, group) : `No ${group.name.toLowerCase()}`, issues: v.issues }))
       .sort((a, b) => (a.key === '' ? 1 : b.key === '' ? -1 : a.name.localeCompare(b.name)))
     return out.map((lane) => ({ ...lane, byState: sortByState(lane.issues) }))
-  }, [board.issues, board.team, group, latestRun])
+  }, [board.issues, board.team, group, latestRun, sort])
 
   function toggleLane(key: string): void {
     setExpanded((prev) => {

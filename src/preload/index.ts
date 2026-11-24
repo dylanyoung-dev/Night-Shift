@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
-import type { AutomationStatus, BoardData, HostStatus, RemoteStatus, NightShiftApi, PlanLimits, UpdateState, Run, Settings, SettingsUpdate } from '../shared/types'
+import type { AutomationStatus, BoardData, HostStatus, RemoteStatus, NightShiftApi, PlanLimits, UpdateState, Run, Settings, SettingsUpdate, TicketStats } from '../shared/types'
 
 function listen<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
   const handler = (_e: IpcRendererEvent, ...args: unknown[]): void => cb(...(args as T))
@@ -29,7 +29,8 @@ const api: NightShiftApi = {
   finishRunStep: (runId: string) => ipcRenderer.invoke('runs:finishStep', runId),
   continueRun: (runId: string, text: string) => ipcRenderer.invoke('runs:continue', runId, text),
   getUsage: (days: number, refresh?: boolean) => ipcRenderer.invoke('usage:get', days, refresh),
-  getTicketStats: (days: number) => ipcRenderer.invoke('usage:tickets', days),
+  getTicketStats: (days: number, refresh?: boolean) => ipcRenderer.invoke('usage:tickets', days, refresh),
+  onTicketStats: (cb: (days: number, stats: TicketStats) => void) => listen<[number, TicketStats]>('ticket-stats', cb),
   getHostStatus: () => ipcRenderer.invoke('host:status'),
   getRemoteStatus: () => ipcRenderer.invoke('remote:status'),
   onRemoteStatus: (cb) => listen<[RemoteStatus]>('remote', cb),
@@ -59,6 +60,9 @@ const api: NightShiftApi = {
   onAutomationStatus: (cb) => listen<[Record<string, AutomationStatus>]>('automations', cb),
   onSettings: (cb) => listen<[Settings]>('settings', cb),
   updateIssue: (issueId, update) => ipcRenderer.invoke('issue:update', issueId, update),
+  editIssueText: (issueId, edit) => ipcRenderer.invoke('issue:editText', issueId, edit),
+  editIssueDoc: (issueId, documentId, edit) => ipcRenderer.invoke('issue:editDoc', issueId, documentId, edit),
+  uploadToIssue: (issueId, file, attach) => ipcRenderer.invoke('issue:upload', issueId, file, attach),
   openInBrowser: (url: string) => ipcRenderer.invoke('open:url', url),
   pickFolder: (startAt?: string) => ipcRenderer.invoke('dialog:pickFolder', startAt),
   listBranches: (repoPath: string, fetch?: boolean) => ipcRenderer.invoke('git:branches', repoPath, fetch),

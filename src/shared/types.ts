@@ -244,6 +244,14 @@ export interface LinearMilestone {
 }
 
 // Fields the board can change. Sent to Linear as-is; null clears a field.
+export interface TextEdit {
+  title: string
+  body: string
+  base: { title: string; body: string }
+  overwrite?: boolean
+}
+export type EditResult = { ok: true } | { conflict: true; error: string } | { error: string }
+
 export interface IssueUpdate {
   stateId?: string
   priority?: number
@@ -625,6 +633,11 @@ export interface NightShiftApi {
   stopRun(runId: string): Promise<void>
   openLog(runId: string): Promise<void>
   updateIssue(issueId: string, update: IssueUpdate): Promise<{ ok: true } | { error: string }>
+  // Editing in the panel: the ticket's title and description, or one of its documents. `base` is the text
+  // when editing started; the save is refused (conflict) if Linear's text changed since, unless overwrite.
+  editIssueText?(issueId: string, edit: TextEdit): Promise<EditResult>
+  editIssueDoc?(issueId: string, documentId: string, edit: TextEdit): Promise<EditResult>
+  uploadToIssue?(issueId: string, file: { name: string; type: string; bytes: Uint8Array }, attach: boolean): Promise<{ url: string; attachError?: string } | { error: string }>
   readLog(runId: string): Promise<string>
   replyToRun(runId: string, text: string): Promise<{ ok: true } | { error: string }>
   finishRunStep(runId: string): Promise<{ ok: true } | { error: string }> // end the Claude session, carry on
@@ -648,7 +661,8 @@ export interface NightShiftApi {
   reviewPr?(url: string, event: PrReviewEvent, body: string, comments?: PrDraftComment[], commitId?: string): Promise<{ ok: true } | { error: string }> // approve, request changes or comment, with line comments
   linearImage?(url: string): Promise<string | null> // data: URL for an image uploaded to Linear
   getUsage?(days: number, refresh?: boolean): Promise<UsageReport>
-  getTicketStats?(days: number): Promise<TicketStats>
+  getTicketStats?(days: number, refresh?: boolean): Promise<TicketStats> // refresh: rebuild now and wait
+  onTicketStats?(cb: (days: number, stats: TicketStats) => void): () => void // a background rebuild finished
   getLimits?(): Promise<PlanLimits | null>
   checkLimits?(): Promise<PlanLimits | { error: string }>
   onLimits?(cb: (l: PlanLimits) => void): () => void

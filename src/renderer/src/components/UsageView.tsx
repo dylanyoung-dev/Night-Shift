@@ -38,6 +38,7 @@ export default function UsageView(): JSX.Element {
   const [report, setReport] = useState<UsageReport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [refreshTick, setRefreshTick] = useState(0) // the Refresh button: rebuild the ticket numbers too
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [asTable, setAsTable] = useState(false)
   const [limits, setLimits] = useState<PlanLimits | null>(null)
@@ -89,7 +90,7 @@ export default function UsageView(): JSX.Element {
   const w = report?.window
   const ns = report ? total(report.nightShift) : 0
   const periodTotal = report ? total(report.period) : 0
-  const tickets = useTicketStats(days, report?.generatedAt ?? 0)
+  const tickets = useTicketStats(days, report?.generatedAt ?? 0, refreshTick)
   const peak = report?.daily.reduce<UsageDay | null>((best, d) => (!best || value(d, metric) > value(best, metric) ? d : best), null)
 
   return (
@@ -106,7 +107,7 @@ export default function UsageView(): JSX.Element {
             </button>
           ))}
         </div>
-        <button className={`btn${loading ? ' spinning-icon' : ''}`} type="button" onClick={() => void load(true)} disabled={loading}>
+        <button className={`btn${loading ? ' spinning-icon' : ''}`} type="button" onClick={() => (setRefreshTick((n) => n + 1), void load(true))} disabled={loading}>
           <Icon name="refresh" size={14} />
           {loading ? 'Reading…' : 'Refresh'}
         </button>

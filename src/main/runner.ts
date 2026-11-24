@@ -39,6 +39,7 @@ interface Active {
   child?: ChildProcess
   stdin?: Writable // open while a Claude step runs as a session
   stopRequested?: boolean
+  reply?: { rs: RunStep; src: RunStep; msg: string } // a reply to an ended run, waiting for a free slot
 }
 
 // One message into a Claude session (stream-json input).
@@ -118,21 +119,40 @@ export class Runner {
       return { error: msg }
     }
     const def = this.deps.getSet(run.stepsName) ?? { name: run.stepsName, states: [], steps: [] }
-    const rs: RunStep = { name: 'Reply', type: 'claude', status: 'running', startedAt: Date.now(), sessionId: src.sessionId, cwd: src.cwd }
+    const rs: RunStep = { name: 'Reply', type: 'claude', status: 'pending', sessionId: src.sessionId, cwd: src.cwd }
     run.steps.push(rs)
     run.currentStep = run.steps.length - 1
-    run.status = 'running'
     run.endedAt = undefined
     run.waiting = null
-    const a: Active = { run, def }
+    const a: Active = { run, def, reply: { rs, src, msg } }
+    // A reply starts a Claude session like any run, so it counts toward the limit: with every slot
+    // taken it waits in the queue (behind runs already waiting) and starts when one ends.
+    const max = this.deps.getMaxConcurrent()
+    if (this.active.size >= max || this.queue.length) {
+      run.status = 'queued'
+      this.queue.push(a)
+      this.log(run, `\n▸ Reply queued: ${this.active.size} of ${max} runs are going. It starts when one ends.\n▶ You: ${msg.split('\n').join('\n  ')}\n`)
+      this.changed()
+      this.pump()
+      return { ok: true }
+    }
+    this.launchReply(a)
+    return { ok: true }
+  }
+
+  private launchReply(a: Active): void {
+    const { run, reply } = a
+    if (!reply) return
+    reply.rs.status = 'running'
+    reply.rs.startedAt = Date.now()
+    run.status = 'running'
     this.active.set(run.id, a)
     this.changed()
-    void this.continueSession(a, rs, src, msg).finally(() => {
+    void this.continueSession(a, reply.rs, reply.src, reply.msg).finally(() => {
       this.active.delete(run.id)
       this.changed()
       this.pump()
     })
-    return { ok: true }
   }
 
   private async continueSession(a: Active, rs: RunStep, src: RunStep, msg: string): Promise<void> {
@@ -245,6 +265,10 @@ export class Runner {
     const queued = this.queue.findIndex((a) => a.run.id === runId)
     if (queued >= 0) {
       const [a] = this.queue.splice(queued, 1)
+      if (a.reply) {
+        a.reply.rs.status = 'skipped'
+        this.log(a.run, '\nQueued reply cancelled by you.\n')
+      }
       a.run.status = 'stopped'
       a.run.endedAt = Date.now()
       this.changed()
@@ -260,6 +284,10 @@ export class Runner {
   private pump(): void {
     while (this.active.size < this.deps.getMaxConcurrent() && this.queue.length) {
       const a = this.queue.shift()!
+      if (a.reply) {
+        this.launchReply(a)
+        continue
+      }
       this.active.set(a.run.id, a)
       void this.execute(a).finally(() => {
         this.active.delete(a.run.id)

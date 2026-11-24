@@ -37,20 +37,26 @@ interface Point extends TicketBucket {
 
 // Tickets completed in Linear, and what Night Shift's agents spent on them. Loaded once for the usage
 // page, which shows the tiles and the chart in different places.
-export function useTicketStats(days: number, tick: number): { stats: TicketStats | null; supported: boolean } {
+// `tick` re-asks (the page does every minute); `refreshTick` changing asks for a rebuild and waits for it.
+export function useTicketStats(days: number, tick: number, refreshTick = 0): { stats: TicketStats | null; supported: boolean } {
   const api = window.nightShift
   const [stats, setStats] = useState<TicketStats | null>(null)
+  const lastRefresh = useRef(refreshTick)
   useEffect(() => {
     if (!api.getTicketStats) return
     let live = true
+    const force = refreshTick !== lastRefresh.current
+    lastRefresh.current = refreshTick
     void api
-      .getTicketStats(days)
+      .getTicketStats(days, force)
       .then((s) => live && setStats(s))
       .catch((e: Error) => live && setStats((prev) => (prev ? { ...prev, error: e.message } : null)))
     return () => {
       live = false
     }
-  }, [days, tick])
+  }, [days, tick, refreshTick]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Numbers rebuilt in the background arrive as soon as they're ready.
+  useEffect(() => api.onTicketStats?.((d, s) => d === days && setStats(s)), [days]) // eslint-disable-line react-hooks/exhaustive-deps
   return { stats, supported: Boolean(api.getTicketStats) }
 }
 

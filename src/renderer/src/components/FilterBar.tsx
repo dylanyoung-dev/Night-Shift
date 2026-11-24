@@ -1,91 +1,42 @@
-import type { LabelGroup, LinearIssue, LinearLabel, TeamMeta } from '../../../shared/types'
 import { useEffect, useRef, useState } from 'react'
+import type { TeamMeta } from '../../../shared/types'
+import { DEFAULT_CONFIG, isDefault, sameConfig, SORTS, type SavedView, type SortKey, type ViewConfig, type ViewState } from '../boardViews'
+import { activeFilters, AGENT_FILTERS, isFiltering, shortLabel, type AgentFilter, type Filters } from '../filters'
 import { PRIORITY_LABEL } from './LinearIcons'
 import { Icon } from './Icons'
 
-export interface Filters {
-  q: string
-  assignee: 'any' | 'none' | string // member id
-  label: 'any' | string // label id
-  priority: 'any' | number
-  groups: Record<string, string> // label group id (Initiative, Area…) -> label id or 'none'; missing means any
-}
-
-export const NO_FILTERS: Filters = { q: '', assignee: 'any', label: 'any', priority: 'any', groups: {} }
-
-export function isFiltering(f: Filters): boolean {
-  return Boolean(f.q.trim()) || f.assignee !== 'any' || f.label !== 'any' || f.priority !== 'any' || Object.keys(f.groups ?? {}).length > 0
-}
-
-// "Initiative: pricing-v1" in the Initiative group reads as "pricing-v1".
-export function shortLabel(label: LinearLabel, group: LabelGroup | undefined): string {
-  if (!group) return label.name
-  const name = label.name
-  if (name.toLowerCase().startsWith(group.name.toLowerCase())) {
-    const rest = name.slice(group.name.length).replace(/^\s*[:/›>-]\s*/, '')
-    if (rest && rest !== name.slice(group.name.length)) return rest
-  }
-  return name
-}
-
-// The issue's label in a group (groups in Linear allow one label each), looked up via the team's labels.
-export function groupLabel(issue: LinearIssue, groupId: string, team: TeamMeta | null | undefined): LinearLabel | undefined {
-  return issue.labels.find((l) => (l.groupId ?? team?.labels.find((t) => t.id === l.id)?.groupId) === groupId)
-}
-
-export function applyFilters(issues: LinearIssue[], f: Filters, team?: TeamMeta | null): LinearIssue[] {
-  const q = f.q.trim().toLowerCase()
-  const groups = Object.entries(f.groups ?? {})
-  return issues.filter(
-    (i) =>
-      (!q || i.identifier.toLowerCase().includes(q) || i.title.toLowerCase().includes(q) || i.parent?.title.toLowerCase().includes(q)) &&
-      (f.assignee === 'any' || (f.assignee === 'none' ? !i.assignee : i.assignee?.id === f.assignee)) &&
-      (f.label === 'any' || i.labels.some((l) => l.id === f.label)) &&
-      (f.priority === 'any' || i.priority === f.priority) &&
-      groups.every(([gid, want]) => {
-        const has = groupLabel(i, gid, team)
-        return want === 'none' ? !has : has?.id === want
-      })
-  )
-}
+// The bar above the board: search, the View menu (saved views), the Filters panel (what to show, the
+// card order and swimlanes, as one setup) and Reset. The setup in use stays until Reset, saved or not;
+// Reset goes back to all tickets and leaves saved views alone.
 
 interface Props {
-  filters: Filters
+  state: ViewState
+  views: SavedView[]
   team: TeamMeta | null | undefined
   shown: number
   total: number
-  onChange(f: Filters): void
-  groupBy: string | null // label group id the board is split by
-  onGroupBy(groupId: string | null): void
-  wide: boolean // all filters inline; otherwise behind a Filters button
+  onChange(config: ViewConfig): void
+  onPickView(id: string): void
+  onSaveView(name: string): void
+  onUpdateView(): void
+  onDeleteView(id: string): void
+  onReset(): void
 }
 
-export default function FilterBar({ filters, team, shown, total, onChange, groupBy, onGroupBy, wide }: Props): JSX.Element {
-  const set = <K extends keyof Filters>(k: K, v: Filters[K]): void => onChange({ ...filters, [k]: v })
-  const groups = team?.labelGroups ?? []
-  const setGroup = (gid: string, v: string): void => {
-    const next = { ...(filters.groups ?? {}) }
-    if (v === 'any') delete next[gid]
-    else next[gid] = v
-    onChange({ ...filters, groups: next })
-  }
+// Closes on a click outside or on Esc (before Esc can close the ticket panel).
+function usePopover(): { open: boolean; setOpen(v: boolean): void; ref: React.RefObject<HTMLDivElement> } {
   const [open, setOpen] = useState(false)
-  const popRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (wide) setOpen(false)
-  }, [wide])
-  // The popover closes on a click outside it or on Esc (before Esc can close the ticket panel).
+  const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent): void => {
-      if (popRef.current && !popRef.current.contains(e.target as Node)) setOpen(false)
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
       e.stopPropagation()
       e.preventDefault()
       setOpen(false)
-      popRef.current?.querySelector<HTMLButtonElement>('.filters-btn')?.focus()
     }
     window.addEventListener('mousedown', onDown, true)
     window.addEventListener('keydown', onKey, true)
@@ -94,134 +45,272 @@ export default function FilterBar({ filters, team, shown, total, onChange, group
       window.removeEventListener('keydown', onKey, true)
     }
   }, [open])
+  return { open, setOpen, ref }
+}
 
-  // Which filters are on, by name, for the Filters button.
-  const active = [
-    filters.assignee !== 'any' ? 'Assignee' : null,
-    ...groups.filter((g) => filters.groups?.[g.id] !== undefined).map((g) => g.name),
-    filters.label !== 'any' ? 'Label' : null,
-    filters.priority !== 'any' ? 'Priority' : null
-  ].filter((x): x is string => Boolean(x))
-  const summary = active.length
-    ? `${active.length} on: ${active.join(', ')}`
-    : ['Assignee', ...groups.map((g) => g.name.toLowerCase()), 'label', 'priority'].join(', ')
-
-  const selects = (
-    <>
-      <select className="input filter-sel" aria-label="Assignee" value={filters.assignee} onChange={(e) => set('assignee', e.target.value)}>
-        <option value="any">Any assignee</option>
-        <option value="none">Unassigned</option>
-        {team?.members.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.name}
-          </option>
-        ))}
-      </select>
-      {groups.map((g) => {
-        const noun = g.name.toLowerCase()
-        return (
-          <select
-            key={g.id}
-            className="input filter-sel"
-            aria-label={g.name}
-            value={filters.groups?.[g.id] ?? 'any'}
-            onChange={(e) => setGroup(g.id, e.target.value)}
-          >
-            <option value="any">Any {noun}</option>
-            <option value="none">No {noun}</option>
-            {team?.labels
-              .filter((l) => l.groupId === g.id)
-              .map((l) => (
-                <option key={l.id} value={l.id}>
-                  {shortLabel(l, g)}
-                </option>
-              ))}
-          </select>
-        )
-      })}
-      <select className="input filter-sel" aria-label="Label" value={filters.label} onChange={(e) => set('label', e.target.value)}>
-        <option value="any">Any label</option>
-        {team?.labels.filter((l) => !l.groupId).map((l) => (
-          <option key={l.id} value={l.id}>
-            {l.name}
-          </option>
-        ))}
-      </select>
-      <select
-        className="input filter-sel"
-        aria-label="Priority"
-        value={String(filters.priority)}
-        onChange={(e) => set('priority', e.target.value === 'any' ? 'any' : Number(e.target.value))}
-      >
-        <option value="any">Any priority</option>
-        {[1, 2, 3, 4, 0].map((p) => (
-          <option key={p} value={p}>
-            {PRIORITY_LABEL[p]}
-          </option>
-        ))}
-      </select>
-    </>
+function SaveAs({ onSave, onDone }: { onSave(name: string): void; onDone(): void }): JSX.Element {
+  const [name, setName] = useState('')
+  return (
+    <form
+      className="view-save"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (!name.trim()) return
+        onSave(name.trim())
+        onDone()
+      }}
+    >
+      <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="View name, e.g. My agents" aria-label="View name" maxLength={60} />
+      <button type="submit" className="btn small primary" disabled={!name.trim()}>
+        Save
+      </button>
+    </form>
   )
+}
+
+export default function FilterBar({ state, views, team, shown, total, onChange, onPickView, onSaveView, onUpdateView, onDeleteView, onReset }: Props): JSX.Element {
+  const { config, viewId } = state
+  const filters = config.filters
+  const groups = team?.labelGroups ?? []
+  const setF = <K extends keyof Filters>(k: K, v: Filters[K]): void => onChange({ ...config, filters: { ...filters, [k]: v } })
+  const setGroup = (gid: string, v: string): void => {
+    const next = { ...(filters.groups ?? {}) }
+    if (v === 'any') delete next[gid]
+    else next[gid] = v
+    onChange({ ...config, filters: { ...filters, groups: next } })
+  }
+
+  const view = views.find((v) => v.id === viewId) ?? null
+  const modified = !!view && !sameConfig(config, view.config)
+  const on = activeFilters(filters, groups)
+  const arranged = config.sort !== DEFAULT_CONFIG.sort || !!config.groupBy
+  const count = on.length + (arranged ? 1 : 0)
+  const canReset = !isDefault(config) || !!viewId
+  const nothingToSave = isDefault(config)
+
+  const viewMenu = usePopover()
+  const panel = usePopover()
+  const [saving, setSaving] = useState<'menu' | 'panel' | null>(null)
+  useEffect(() => {
+    if (!viewMenu.open && saving === 'menu') setSaving(null)
+    if (!panel.open && saving === 'panel') setSaving(null)
+  }, [viewMenu.open, panel.open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const groupName = (id: string): string => groups.find((g) => g.id === id)?.name ?? ''
+  const groupIdOf = (name: string | null): string => groups.find((g) => g.name === name)?.id ?? ''
 
   return (
     <div className="filterbar" role="search" aria-label="Filter tickets">
       <label className="filter-search">
         <span className="sr-only">Filter by ID or title</span>
         <Icon name="search" size={14} />
-        <input
-          className="input filter-q"
-          type="search"
-          placeholder="Filter by ID or title"
-          value={filters.q}
-          onChange={(e) => set('q', e.target.value)}
-        />
+        <input className="input filter-q" type="search" placeholder="Filter by ID or title" value={filters.q} onChange={(e) => setF('q', e.target.value)} />
       </label>
-      {wide ? (
-        <div className="filter-sels">{selects}</div>
-      ) : (
-        <div className="filter-pop-wrap" ref={popRef}>
-          <button
-            type="button"
-            className={`filters-btn${active.length ? ' on' : ''}`}
-            aria-expanded={open}
-            aria-haspopup="dialog"
-            onClick={() => setOpen((o) => !o)}
-          >
-            <Icon name="filters" size={14} />
-            Filters
-            <span className="filters-summary">{summary}</span>
-          </button>
-          {open && (
-            <div className="filter-pop" role="dialog" aria-label="Filters">
-              {selects}
-            </div>
+
+      {/* Saved views */}
+      <div className="filter-pop-wrap" ref={viewMenu.ref}>
+        <button type="button" className={`filters-btn view-btn${view ? ' on' : ''}`} aria-haspopup="menu" aria-expanded={viewMenu.open} onClick={() => viewMenu.setOpen(!viewMenu.open)}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M3 9h18M9 9v11" />
+          </svg>
+          <span className="view-name">{view ? view.name : 'All tickets'}</span>
+          {modified && (
+            <span className="view-mod" title="Changed since it was saved">
+              ●
+            </span>
           )}
-        </div>
-      )}
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
+        {viewMenu.open && (
+          <div className="filter-pop view-menu" role="menu">
+            <div className="view-menu-head">Saved views</div>
+            {!views.length && <div className="note view-empty">None yet. Set up filters, sort and swimlanes, then save them here.</div>}
+            {views.map((v) => (
+              <div key={v.id} className={`view-item${v.id === viewId ? ' on' : ''}`}>
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={v.id === viewId}
+                  onClick={() => {
+                    onPickView(v.id)
+                    viewMenu.setOpen(false)
+                  }}
+                >
+                  <span className="t">{v.name}</span>
+                  {v.id === viewId && (
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="m5 12 5 5 9-10" />
+                    </svg>
+                  )}
+                </button>
+                <button type="button" className="view-del" title={`Delete "${v.name}"`} aria-label={`Delete view ${v.name}`} onClick={() => onDeleteView(v.id)}>
+                  ×
+                </button>
+              </div>
+            ))}
+            <div className="view-menu-sep" />
+            {view && modified && (
+              <button
+                type="button"
+                className="view-action"
+                onClick={() => {
+                  onUpdateView()
+                  viewMenu.setOpen(false)
+                }}
+              >
+                Update “{view.name}” with the current setup
+              </button>
+            )}
+            {saving === 'menu' ? (
+              <SaveAs onSave={onSaveView} onDone={() => viewMenu.setOpen(false)} />
+            ) : (
+              <button type="button" className="view-action" onClick={() => setSaving('menu')} disabled={nothingToSave}>
+                Save current setup as a view…
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Filters, sort and swimlanes */}
+      <div className="filter-pop-wrap" ref={panel.ref}>
+        <button type="button" className={`filters-btn${count ? ' on' : ''}`} aria-expanded={panel.open} aria-haspopup="dialog" onClick={() => panel.setOpen(!panel.open)}>
+          <Icon name="filters" size={14} />
+          Filters
+          {count > 0 && <span className="filters-count">{count}</span>}
+          {on.length > 0 && <span className="filters-summary">{on.join(', ')}</span>}
+        </button>
+        {panel.open && (
+          <div className="filter-pop filter-panel" role="dialog" aria-label="Filters, sort and swimlanes">
+            <section>
+              <h4>Show</h4>
+              <label className="fp-row">
+                <span>Agent activity</span>
+                <select className="input filter-sel" value={filters.agents ?? 'all'} onChange={(e) => setF('agents', e.target.value as AgentFilter)}>
+                  {AGENT_FILTERS.map((a) => (
+                    <option key={a.key} value={a.key}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="fp-row">
+                <span>Assignee</span>
+                <select className="input filter-sel" value={filters.assignee} onChange={(e) => setF('assignee', e.target.value)}>
+                  <option value="any">Anyone</option>
+                  <option value="none">Unassigned</option>
+                  {team?.members.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {groups.map((g) => (
+                <label key={g.id} className="fp-row">
+                  <span>{g.name}</span>
+                  <select className="input filter-sel" value={filters.groups?.[g.id] ?? 'any'} onChange={(e) => setGroup(g.id, e.target.value)}>
+                    <option value="any">Any</option>
+                    <option value="none">No {g.name.toLowerCase()}</option>
+                    {team?.labels
+                      .filter((l) => l.groupId === g.id)
+                      .map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {shortLabel(l, g)}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              ))}
+              <label className="fp-row">
+                <span>Label</span>
+                <select className="input filter-sel" value={filters.label} onChange={(e) => setF('label', e.target.value)}>
+                  <option value="any">Any</option>
+                  {team?.labels
+                    .filter((l) => !l.groupId)
+                    .map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label className="fp-row">
+                <span>Priority</span>
+                <select className="input filter-sel" value={String(filters.priority)} onChange={(e) => setF('priority', e.target.value === 'any' ? 'any' : Number(e.target.value))}>
+                  <option value="any">Any</option>
+                  {[1, 2, 3, 4, 0].map((p) => (
+                    <option key={p} value={p}>
+                      {PRIORITY_LABEL[p]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </section>
+            <section>
+              <h4>Arrange</h4>
+              <label className="fp-row">
+                <span>Sort cards by</span>
+                <select className="input filter-sel" value={config.sort} onChange={(e) => onChange({ ...config, sort: e.target.value as SortKey })}>
+                  {SORTS.map((s) => (
+                    <option key={s.key} value={s.key}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {groups.length > 0 && (
+                <label className="fp-row">
+                  <span>Swimlanes by</span>
+                  <select className="input filter-sel" value={groupIdOf(config.groupBy)} onChange={(e) => onChange({ ...config, groupBy: e.target.value ? groupName(e.target.value) : null })}>
+                    <option value="">None</option>
+                    {groups.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </section>
+            <footer className="fp-foot">
+              {saving === 'panel' ? (
+                <SaveAs onSave={onSaveView} onDone={() => setSaving(null)} />
+              ) : (
+                <>
+                  <button type="button" className="btn small" onClick={onReset} disabled={!canReset} title="Back to all tickets in the default order. Saved views are kept.">
+                    Reset
+                  </button>
+                  <span className="spacer" />
+                  {view && modified && (
+                    <button type="button" className="btn small" onClick={onUpdateView}>
+                      Update “{view.name}”
+                    </button>
+                  )}
+                  <button type="button" className="btn small primary" onClick={() => setSaving('panel')} disabled={nothingToSave}>
+                    Save as view…
+                  </button>
+                </>
+              )}
+            </footer>
+          </div>
+        )}
+      </div>
+
       {isFiltering(filters) && (
-        <>
-          <span className="note">
-            {shown} of {total} tickets
-          </span>
-          <button className="btn small" type="button" onClick={() => onChange(NO_FILTERS)}>
-            Clear filters
-          </button>
-        </>
+        <span className="note">
+          {shown} of {total} tickets
+        </span>
+      )}
+      {canReset && (
+        <button className="btn small" type="button" onClick={onReset} title="Back to all tickets in the default order. Saved views are kept.">
+          Reset
+        </button>
       )}
       <span className="spacer" />
-      {groups.length > 0 && (
-        <label className="filter-group">
-          <span>Group by</span>
-          <select className="input filter-sel" value={groupBy ?? ''} onChange={(e) => onGroupBy(e.target.value || null)}>
-            <option value="">None</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
     </div>
   )
 }

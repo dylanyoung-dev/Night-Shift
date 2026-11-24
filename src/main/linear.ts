@@ -546,3 +546,73 @@ export async function fetchIssueStates(apiKey: string, identifiers: string[]): P
   }
   return out
 }
+
+// ---- Editing from the panel ----
+// The ticket's title and description, and its documents (the spec, the plan, …), edited in the panel
+// and written back to Linear. Each save carries the text as it was when editing started, and is refused
+// if Linear's text has changed since (someone edited it meanwhile), unless the save says to overwrite.
+// Only the text is compared, so a comment or a status change in between doesn't count.
+export type TextBase = { title: string; body: string }
+const same = (a: string, b: string): boolean => a.replace(/\r\n/g, '\n').trim() === b.replace(/\r\n/g, '\n').trim()
+
+export async function editIssueText(apiKey: string, issueId: string, input: { title?: string; description?: string }, base?: TextBase, overwrite = false): Promise<{ conflict: true } | { ok: true }> {
+  if (base && !overwrite) {
+    const cur = await gql<{ issue: { title: string; description: string | null } }>(apiKey, 'query Cur($id: String!) { issue(id: $id) { title description } }', { id: issueId })
+    if (!same(cur.issue.title, base.title) || !same(cur.issue.description ?? '', base.body)) return { conflict: true }
+  }
+  const data = await gql<{ issueUpdate: { success: boolean } }>(
+    apiKey,
+    'mutation Edit($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }',
+    { id: issueId, input }
+  )
+  if (!data.issueUpdate.success) throw new Error('Linear did not accept the change')
+  return { ok: true }
+}
+
+// The document as Linear has it now, with its ticket, so a save only touches documents of tickets on
+// the board and can tell if the text changed meanwhile.
+export async function currentDocument(apiKey: string, documentId: string): Promise<{ issueId: string | null; title: string; content: string }> {
+  const d = await gql<{ document: { title: string; content: string | null; issue: { id: string } | null } }>(apiKey, 'query Doc($id: String!) { document(id: $id) { title content issue { id } } }', { id: documentId })
+  return { issueId: d.document.issue?.id ?? null, title: d.document.title, content: d.document.content ?? '' }
+}
+export const sameText = same
+
+export async function editDocument(apiKey: string, documentId: string, input: { title?: string; content?: string }): Promise<void> {
+  const data = await gql<{ documentUpdate: { success: boolean } }>(
+    apiKey,
+    'mutation EditDoc($id: String!, $input: DocumentUpdateInput!) { documentUpdate(id: $id, input: $input) { success } }',
+    { id: documentId, input }
+  )
+  if (!data.documentUpdate.success) throw new Error('Linear did not accept the change')
+}
+
+// Uploads a file to Linear's storage and returns its URL (to put in markdown). Linear hands out a
+// signed upload URL plus headers; the file goes there with a PUT.
+export async function uploadToLinear(apiKey: string, file: { name: string; type: string; data: Buffer }): Promise<string> {
+  const contentType = file.type || 'application/octet-stream'
+  const r = await gql<{ fileUpload: { success: boolean; uploadFile: { uploadUrl: string; assetUrl: string; headers: { key: string; value: string }[] } | null } }>(
+    apiKey,
+    `mutation Upload($contentType: String!, $filename: String!, $size: Int!) {
+      fileUpload(contentType: $contentType, filename: $filename, size: $size) { success uploadFile { uploadUrl assetUrl headers { key value } } }
+    }`,
+    { contentType, filename: file.name, size: file.data.length }
+  )
+  const up = r.fileUpload.uploadFile
+  if (!r.fileUpload.success || !up) throw new Error("Linear didn't give an upload address")
+  const headers: Record<string, string> = { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=31536000' }
+  for (const h of up.headers) headers[h.key] = h.value
+  const res = await fetch(up.uploadUrl, { method: 'PUT', headers, body: new Uint8Array(file.data), signal: AbortSignal.timeout(120_000) })
+  if (!res.ok) throw new Error(`Upload failed (${res.status} ${res.statusText})`)
+  return up.assetUrl
+}
+
+// Adds an uploaded file to the ticket's attachments, so it's listed with the ticket and not only linked
+// in the text.
+export async function attachToIssue(apiKey: string, issueId: string, url: string, title: string): Promise<void> {
+  const data = await gql<{ attachmentCreate: { success: boolean } }>(
+    apiKey,
+    'mutation Attach($input: AttachmentCreateInput!) { attachmentCreate(input: $input) { success } }',
+    { input: { issueId, url, title } }
+  )
+  if (!data.attachmentCreate.success) throw new Error('Linear did not add the attachment')
+}

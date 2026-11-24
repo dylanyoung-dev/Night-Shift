@@ -8,6 +8,7 @@ import Markdown from './Markdown'
 import RunDetails, { type RunDetailsProps } from './RunPanel'
 import PrStrip from './PrStrip'
 import CodeReview from './CodeReview'
+import TextEditor, { hasDraft } from './TextEditor'
 import { refreshPrs } from '../prStatus'
 
 // 'run', 'ticket', 'review' (code review), 'spec' (the spec document, whichever it turns out to be) or a document id
@@ -167,6 +168,45 @@ export default function TicketPanel(props: Props): JSX.Element {
   }
 
   const title = d?.title ?? issue?.title ?? run?.title ?? ''
+
+  // Editing the ticket (title and description) or the open document, in place of the view. A ticket or
+  // document with unsaved text opens straight in the editor. Files dropped on the view open the editor
+  // and upload into it.
+  const editKey = issue && d ? (tab === 'ticket' ? `${issue.id}|ticket` : doc ? `${issue.id}|${doc.id}` : null) : null
+  const [editOn, setEditOn] = useState<string | null>(null)
+  const [dropped, setDropped] = useState<File[]>([])
+  const [dropHover, setDropHover] = useState(false)
+  const editing = !!editKey && (editOn === editKey || hasDraft(editKey))
+  function startEdit(files: File[] = []): void {
+    if (!editKey) return
+    setDropped(files)
+    setEditOn(editKey)
+  }
+  function endEdit(saved: boolean): void {
+    setEditOn(null)
+    setDropped([])
+    if (saved) reload()
+  }
+  const dropProps = editKey && !editing
+    ? {
+        onDragOver: (e: React.DragEvent) => {
+          if (![...e.dataTransfer.types].includes('Files')) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'copy'
+          setDropHover(true)
+        },
+        onDragLeave: (e: React.DragEvent) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropHover(false)
+        },
+        onDrop: (e: React.DragEvent) => {
+          setDropHover(false)
+          const files = [...e.dataTransfer.files]
+          if (!files.length) return
+          e.preventDefault()
+          startEdit(files)
+        }
+      }
+    : {}
   const tone = run ? STATUS_TONE[run.status] : 'idle'
 
   return (
@@ -299,11 +339,42 @@ export default function TicketPanel(props: Props): JSX.Element {
       )}
 
       {linear && issue && (
-        <div className="glimpse-body" role="tabpanel">
+        <div className={`glimpse-body${editing ? ' editing' : ''}${dropHover ? ' drop-hover' : ''}`} role="tabpanel" {...dropProps}>
           {error && <div className="note warn">{d ? `Couldn't refresh from Linear: ${error}` : error}</div>}
           {!d && !error && <div className="empty">Loading {issue.identifier} from Linear…</div>}
-          {d && tab === 'ticket' && <TicketDetails d={d} onOpen={onOpenLinear} onShow={props.onShowIssue} onOpenDoc={setTab} />}
-          {d && tab !== 'ticket' && (
+          {d && editing && editKey && (
+            <TextEditor
+              key={editKey}
+              issueId={issue.id}
+              target={
+                tab === 'ticket' || !doc
+                  ? { key: editKey, kind: 'ticket', title: d.title, body: d.description }
+                  : { key: editKey, kind: 'document', title: doc.title, body: doc.content }
+              }
+              pendingFiles={dropped}
+              onSave={async (t, b, base, overwrite) => {
+                const edit = { title: t, body: b, base, overwrite }
+                const api = window.nightShift
+                const r = tab === 'ticket' || !doc ? await api.editIssueText?.(issue.id, edit) : await api.editIssueDoc?.(issue.id, doc.id, edit)
+                return r ?? { error: 'Editing needs a restart of Night Shift.' }
+              }}
+              onDone={endEdit}
+            />
+          )}
+          {d && !editing && editKey && (
+            <div className="edit-row">
+              <span className="note">Drop images or files here to add them</span>
+              <button type="button" className="btn small" onClick={() => startEdit()} title={tab === 'ticket' ? 'Edit the title and description' : `Edit ${doc?.title ?? 'this document'}`}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+                Edit
+              </button>
+            </div>
+          )}
+          {dropHover && <div className="te-drop">Drop to add to {tab === 'ticket' ? issue.identifier : (doc?.title ?? 'the document')}</div>}
+          {d && !editing && tab === 'ticket' && <TicketDetails d={d} onOpen={onOpenLinear} onShow={props.onShowIssue} onOpenDoc={setTab} />}
+          {d && !editing && tab !== 'ticket' && (
             <article className="glimpse-doc">
               {doc ? (
                 <>

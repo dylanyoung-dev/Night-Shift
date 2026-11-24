@@ -13,7 +13,9 @@ import AutomationsView from './components/AutomationsView'
 import RunsView from './components/RunsView'
 import UsageView from './components/UsageView'
 import UpdateBanner from './components/UpdateBanner'
-import FilterBar, { applyFilters, NO_FILTERS, type Filters } from './components/FilterBar'
+import FilterBar from './components/FilterBar'
+import { applyFilters, type Filters } from './filters'
+import { DEFAULT_STATE, forSaving, loadState, loadViews, saveState, saveViews, type SavedView, type ViewConfig, type ViewState } from './boardViews'
 import BranchPicker from './components/BranchPicker'
 import { Icon, PlayIcon } from './components/Icons'
 import { useWide, useWideSidebar } from './useWide'
@@ -53,25 +55,48 @@ export default function App(): JSX.Element {
   const setLogRunId = (id: string | null): void =>
     setLogStack((st) => (id === null ? [] : st[st.length - 1] === id ? st : [...st.filter((x) => x !== id), id]))
   const backFromLog = (): void => setLogStack((st) => st.slice(0, -1))
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS)
-  // Board swimlanes by a label group (Initiative, Area…). Remembered by group name, per viewer.
-  const [groupByName, setGroupByName] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('nightshift.groupBy')
-    } catch {
-      return null
-    }
-  })
-  const groupBy = board.team?.labelGroups?.find((g) => g.name === groupByName)?.id ?? null
-  function chooseGroupBy(id: string | null): void {
-    const name = board.team?.labelGroups?.find((g) => g.id === id)?.name ?? null
-    setGroupByName(name)
-    try {
-      if (name) localStorage.setItem('nightshift.groupBy', name)
-      else localStorage.removeItem('nightshift.groupBy')
-    } catch {
-      // per-viewer convenience only
-    }
+  // The board's view: filters, card order and swimlanes, kept per project until Reset, plus the
+  // project's saved views (see boardViews.ts).
+  const viewProject = settings?.activeProjectId ?? ''
+  const [viewState, setViewStateRaw] = useState<ViewState>(DEFAULT_STATE)
+  const [savedViews, setSavedViewsRaw] = useState<SavedView[]>([])
+  const [viewsFor, setViewsFor] = useState<string | null>(null) // the project they were loaded for
+  useEffect(() => {
+    if (!settings) return
+    setViewStateRaw(loadState(viewProject))
+    setSavedViewsRaw(loadViews(viewProject))
+    setViewsFor(viewProject)
+  }, [viewProject, !!settings]) // eslint-disable-line react-hooks/exhaustive-deps
+  function setViewState(next: ViewState): void {
+    setViewStateRaw(next)
+    if (viewsFor !== null) saveState(viewsFor, next)
+  }
+  function setSavedViews(next: SavedView[]): void {
+    setSavedViewsRaw(next)
+    if (viewsFor !== null) saveViews(viewsFor, next)
+  }
+  const filters: Filters = viewState.config.filters
+  const groupBy = board.team?.labelGroups?.find((g) => g.name === viewState.config.groupBy)?.id ?? null
+  const viewActions = {
+    onChange: (config: ViewConfig) => setViewState({ ...viewState, config }),
+    onPickView: (id: string) => {
+      const v = savedViews.find((x) => x.id === id)
+      if (v) setViewState({ config: { ...v.config, filters: { ...v.config.filters, q: filters.q } }, viewId: id })
+    },
+    onSaveView: (name: string) => {
+      const v: SavedView = { id: `v${Date.now().toString(36)}`, name, config: forSaving(viewState.config) }
+      setSavedViews([...savedViews.filter((x) => x.name.toLowerCase() !== name.toLowerCase()), v])
+      setViewState({ ...viewState, viewId: v.id })
+    },
+    onUpdateView: () => {
+      if (!viewState.viewId) return
+      setSavedViews(savedViews.map((x) => (x.id === viewState.viewId ? { ...x, config: forSaving(viewState.config) } : x)))
+    },
+    onDeleteView: (id: string) => {
+      setSavedViews(savedViews.filter((x) => x.id !== id))
+      if (viewState.viewId === id) setViewState({ ...viewState, viewId: null })
+    },
+    onReset: () => setViewState(DEFAULT_STATE)
   }
   const [steps, setSteps] = useState<StepsFile | null>(null)
   // Remote mode: the host this machine uses, and whether it's reachable right now.
@@ -91,9 +116,9 @@ export default function App(): JSX.Element {
   const columnOrder = settings?.columnOrder ?? []
   const columnSettings = settings?.columns ?? {}
   const shownBoard = useMemo(
-    () => ({ ...board, states: orderStates(board.states, columnOrder), issues: applyFilters(board.issues, filters, board.team) }),
+    () => ({ ...board, states: orderStates(board.states, columnOrder), issues: applyFilters(board.issues, filters, board.team, runs) }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [board, filters, columnOrder.join('|')]
+    [board, filters, columnOrder.join('|'), (filters.agents ?? 'all') === 'all' ? null : runs]
   )
   // A column's header menu changed its color or greyed it out.
   function setColumnSettings(name: string, cfg: ColumnSettings): void {
@@ -116,7 +141,6 @@ export default function App(): JSX.Element {
     setSelectedIssue(null)
     if (id === (settings?.activeProjectId ?? null)) return
     setSwitchingTo(id ? settings?.projects.find((p) => p.id === id)?.name ?? 'project' : `team ${settings?.linearTeamKey ?? ''}`)
-    setFilters(NO_FILTERS) // labels and people differ between projects
     setSettings(await api.saveSettings({ activeProjectId: id }))
   }
 
@@ -393,14 +417,12 @@ export default function App(): JSX.Element {
                 {board.error && <div className="banner">{board.error}</div>}
                 {message && <div className="banner">{message}</div>}
                 <FilterBar
-                  filters={filters}
+                  state={viewState}
+                  views={savedViews}
                   team={board.team}
                   shown={shownBoard.issues.length}
                   total={board.issues.length}
-                  onChange={setFilters}
-                  groupBy={groupBy}
-                  onGroupBy={chooseGroupBy}
-                  wide={wide}
+                  {...viewActions}
                 />
                 {/* The board and the ticket panel share this row, so the panel (docked or drawer) opens below
                     the top bar and filter bar, clear of the window buttons. */}
@@ -420,6 +442,7 @@ export default function App(): JSX.Element {
                   onStart={(id, setName) => void start(id, setName)}
                   setsFor={setsFor}
                   groupBy={groupBy}
+                  sort={viewState.config.sort}
                   wide={wide}
                   onUpdate={(id, update) => void updateIssue(id, update)}
                   onGlimpse={(id, tab) => (setSelectedIssue(id), setPanelTab({ tab: tab ?? 'ticket', at: Date.now() }))}

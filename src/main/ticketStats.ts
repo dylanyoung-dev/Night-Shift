@@ -152,7 +152,15 @@ export async function getTicketStats(
 
 // The usage page's ticket numbers, kept on disk and rebuilt in the background, so opening the page
 // doesn't query Linear and read every session log each time. One entry per range and project.
+// The timer keeps them within 15 minutes; while the page is open (it asks every minute) they're kept
+// within OPEN_FRESH, and a rebuild that finishes is pushed to the page straight away.
 export const TICKET_STATS_EVERY = 15 * 60_000
+const OPEN_FRESH = 2 * 60_000
+type Listener = (days: number, projectId: string | null, stats: TicketStats) => void
+let listener: Listener | null = null
+export function onTicketStatsUpdated(cb: Listener): void {
+  listener = cb
+}
 type Ctx = Parameters<typeof getTicketStats>[1]
 interface Entry {
   stats: TicketStats
@@ -193,6 +201,8 @@ function rebuild(key: string, days: number, ctx: Ctx): Promise<TicketStats> {
       const stats = fresh.error && old && !old.stats.error ? { ...old.stats, error: fresh.error } : fresh
       all[key] = { stats, lastAsked: old?.lastAsked ?? Date.now() }
       saveStore()
+      const [d, p] = key.split('|')
+      listener?.(Number(d) || days, p || null, stats)
       return stats
     })
     .finally(() => building.delete(key))
@@ -200,19 +210,21 @@ function rebuild(key: string, days: number, ctx: Ctx): Promise<TicketStats> {
   return job
 }
 
-// Returns the saved numbers straight away (rebuilding them in the background when they're old),
-// or builds them the first time.
-export async function cachedTicketStats(days: number, projectId: string | null, ctx: Ctx): Promise<TicketStats> {
+// Returns the saved numbers straight away (rebuilding them in the background when they're a couple
+// of minutes old), or builds them and waits: the first time, after midnight (yesterday's "today" would
+// be wrong), and when the page's Refresh asks for it.
+export async function cachedTicketStats(days: number, projectId: string | null, ctx: Ctx, force = false): Promise<TicketStats> {
   const key = `${days}|${projectId ?? ''}`
   const all = loadStore()
   const hit = all[key]
-  if (!hit) {
-    all[key] = { stats: await rebuild(key, days, ctx), lastAsked: Date.now() }
+  if (!hit || force || hit.stats.generatedAt < midnight(Date.now())) {
+    const stats = await rebuild(key, days, ctx)
+    all[key] = { stats, lastAsked: Date.now() }
     saveStore()
-    return all[key].stats
+    return stats
   }
   hit.lastAsked = Date.now()
-  if (Date.now() - hit.stats.generatedAt >= TICKET_STATS_EVERY || hit.stats.error) void rebuild(key, days, ctx).catch(() => undefined)
+  if (Date.now() - hit.stats.generatedAt >= OPEN_FRESH || hit.stats.error) void rebuild(key, days, ctx).catch(() => undefined)
   return hit.stats
 }
 
