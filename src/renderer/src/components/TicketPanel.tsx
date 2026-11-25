@@ -79,7 +79,9 @@ export default function TicketPanel(props: Props): JSX.Element {
   const linear = !!issue && tab !== 'run' && !reviewing
 
   const sig = issue ? JSON.stringify(issue) : ''
-  const { detail, error, loading, reload } = useIssueDetail(issue?.id ?? null, sig, linear)
+  // Details load only while a Linear tab is open (Ticket, a file). On the Run tab the Files list uses
+  // the cached copy, plus the board's word that a spec exists; opening Files re-reads a stale copy.
+  const { detail, error, loading, stale, reload } = useIssueDetail(issue?.id ?? null, sig, linear)
   const d = linear ? detail : cachedIssueDetail(issue?.id ?? null)
 
   // Refresh: the ticket from Linear (card and details) and its pull requests from GitHub, all at once.
@@ -134,7 +136,13 @@ export default function TicketPanel(props: Props): JSX.Element {
   const docs = d?.documents ?? []
   const spec = docs.find((x) => /spec/i.test(x.title)) ?? docs[0]
   // Until the details are loaded the documents aren't known: offer "Spec" when the board says there is one.
-  const docTabs = d ? docs.map((x) => ({ id: x.id, title: x.title })) : issue?.hasSpec !== false || tab === 'spec' ? [{ id: 'spec', title: 'Spec' }] : []
+  // Same when the cached details are older than the board's news (no documents yet, but the board has
+  // seen one added since): the stale copy never hides a spec the board knows about.
+  const docTabs = docs.length
+    ? docs.map((x) => ({ id: x.id, title: x.title }))
+    : (d ? issue?.hasSpec === true : issue?.hasSpec !== false) || tab === 'spec'
+      ? [{ id: 'spec', title: 'Spec' }]
+      : []
   const doc = tab === 'spec' ? spec : docs.find((x) => x.id === tab)
   const tabOn = (id: string): boolean => tab === id || (id !== 'run' && id !== 'ticket' && id !== 'review' && doc?.id === id) || (id === 'spec' && tab === 'spec')
   const identifier = issue?.identifier ?? run?.identifier ?? ''
@@ -163,6 +171,7 @@ export default function TicketPanel(props: Props): JSX.Element {
   useEffect(() => setFilesAt(null), [issue?.id])
   function toggleFiles(): void {
     if (filesAt) return setFilesAt(null)
+    if (issue && d && stale && !loading) reload() // only when the cached list may be out of date
     const r = filesBtn.current?.getBoundingClientRect()
     if (r) setFilesAt({ top: r.bottom + 6, right: window.innerWidth - r.right })
   }

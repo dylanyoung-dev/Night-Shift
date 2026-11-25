@@ -3,7 +3,7 @@ import { globalRunKey, isActiveRun, orderStates, setLabel, type BoardData, type 
 import Sidebar, { View } from './components/Sidebar'
 import Board, { clearRelationsCache } from './components/Board'
 import TicketPanel, { type PanelTab } from './components/TicketPanel'
-import { clearIssueDetailCache } from './issueDetailCache'
+import { clearIssueDetailCache, markIssueStale } from './issueDetailCache'
 import { refreshPrs, usePrPolling } from './prStatus'
 import LogView from './components/LogView'
 import StepsView from './components/StepsView'
@@ -218,6 +218,7 @@ export default function App(): JSX.Element {
       setSwitchingTo(null)
     })
     const offRuns = api.onRuns((r) => setRuns([...r]))
+    const offSynced = api.onIssueSynced?.(markIssueStale)
     const offOut = api.onRunOutput((runId, chunk) => {
       const pending = seedingLogs.current.get(runId)
       if (pending !== undefined) seedingLogs.current.set(runId, pending + chunk)
@@ -231,6 +232,7 @@ export default function App(): JSX.Element {
       offSettings()
       offOpenRun()
       offRuns()
+      offSynced?.()
       offOut()
       clearInterval(timer)
     }

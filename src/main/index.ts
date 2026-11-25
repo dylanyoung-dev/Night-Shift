@@ -570,6 +570,7 @@ async function syncIssue(key: string, issueId: string): Promise<void> {
   board = { ...board, issues: visible ? [...others, fresh] : others }
   saveBoardCache()
   send('board', board)
+  send('issue-synced', fresh.id) // the panel's cached details (documents, comments) are out of date now
   host.broadcast('tickets-changed', { ticket: fresh.id })
 }
 

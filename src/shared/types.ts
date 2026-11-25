@@ -664,6 +664,7 @@ export interface NightShiftApi {
   getUsage?(days: number, refresh?: boolean): Promise<UsageReport>
   getTicketStats?(days: number, refresh?: boolean): Promise<TicketStats> // refresh: rebuild now and wait
   onTicketStats?(cb: (days: number, stats: TicketStats) => void): () => void // a background rebuild finished
+  onIssueSynced?(cb: (issueId: string) => void): () => void // one ticket was re-read from Linear (after a run step, an edit…)
   getLimits?(): Promise<PlanLimits | null>
   checkLimits?(): Promise<PlanLimits | { error: string }>
   onLimits?(cb: (l: PlanLimits) => void): () => void

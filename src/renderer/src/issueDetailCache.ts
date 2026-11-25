@@ -5,7 +5,9 @@ import type { IssueDetail } from '../../shared/types'
 // Loaded only when one of those tabs is open, then kept here so flipping between cards or tabs is
 // instant. Stale-while-revalidate: a cached copy shows at once and is refreshed in the background
 // when it's older than a minute, or when the ticket changed on the board (an agent or someone in
-// Linear edited it). The board's refresh button clears it all.
+// Linear edited it). After a run step the app re-reads that one ticket; its entry is then marked
+// stale and re-read the next time a Linear tab shows it (nothing is fetched for tickets nobody
+// looks at). The board's refresh button clears it all.
 
 const FRESH_MS = 60_000
 const MAX_ENTRIES = 60
@@ -15,6 +17,7 @@ interface Entry {
   error?: string
   at: number // when detail was fetched
   sig: string // the board's view of the ticket when it was fetched
+  stale?: boolean // the ticket was re-read since (e.g. an agent step finished)
   pending?: Promise<void>
 }
 
@@ -24,6 +27,14 @@ const notify = (): void => listeners.forEach((l) => l())
 
 export function clearIssueDetailCache(): void {
   cache.clear()
+  notify()
+}
+
+// One ticket changed in Linear: re-read its details when they're next shown.
+export function markIssueStale(id: string): void {
+  const e = cache.get(id)
+  if (!e || e.stale) return
+  cache.set(id, { ...e, stale: true })
   notify()
 }
 
@@ -55,7 +66,7 @@ export function useIssueDetail(
   id: string | null,
   sig: string,
   enabled: boolean
-): { detail: IssueDetail | null; error: string | null; loading: boolean; reload(): void } {
+): { detail: IssueDetail | null; error: string | null; loading: boolean; stale: boolean; reload(): void } {
   const [, rerender] = useReducer((x: number) => x + 1, 0)
   useEffect(() => {
     listeners.add(rerender)
@@ -65,13 +76,14 @@ export function useIssueDetail(
     if (!enabled || !id) return
     const e = cache.get(id)
     if (e?.pending) return
-    if (!e?.detail || e.sig !== sig || Date.now() - e.at > FRESH_MS) void fetchDetail(id, sig)
-  }, [id, sig, enabled])
+    if (!e?.detail || e.stale || e.sig !== sig || Date.now() - e.at > FRESH_MS) void fetchDetail(id, sig)
+  }, [id, sig, enabled, id ? cache.get(id)?.stale : undefined]) // eslint-disable-line react-hooks/exhaustive-deps
   const e = id ? cache.get(id) : undefined
   return {
     detail: e?.detail ?? null,
     error: e?.error ?? null,
     loading: !!e?.pending,
+    stale: !e?.detail || !!e.stale || e.sig !== sig || Date.now() - e.at > FRESH_MS,
     reload: () => void (id && fetchDetail(id, sig))
   }
 }
