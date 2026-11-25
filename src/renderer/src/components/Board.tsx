@@ -294,12 +294,30 @@ function Card({
           </button>
         )}
         <span className="spacer" />
-        {issue.blocked && (
-          <span className="blocked-tag" title="Blocked by another ticket">
-            <Icon name="blocked" size={12} width={2.2} />
-            Blocked
-          </span>
-        )}
+        {issue.blocked &&
+          (issue.blockedBy?.length ? (
+            // Which ticket blocks it, kept short: the first one's number, "+N" for more, the rest on hover.
+            // A click shows the blocker on the board when it's there.
+            <button
+              type="button"
+              className="blocked-tag blocked-by"
+              title={`Blocked by:\n${issue.blockedBy.map((b) => `${b.identifier}  ${b.title}`).join('\n')}`}
+              aria-label={`Blocked by ${issue.blockedBy.map((b) => b.identifier).join(', ')}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onShowIssue(issue.blockedBy![0].id)
+              }}
+            >
+              <Icon name="blocked" size={12} width={2.2} />
+              {issue.blockedBy[0].identifier}
+              {issue.blockedBy.length > 1 && <span className="blocked-more">+{issue.blockedBy.length - 1}</span>}
+            </button>
+          ) : (
+            <span className="blocked-tag" title="Blocked by another ticket">
+              <Icon name="blocked" size={12} width={2.2} />
+              Blocked
+            </span>
+          ))}
         <button type="button" className="chip-btn card-gear" aria-label={`Settings for ${issue.identifier}`} title="Status, priority, assignee, labels and more (also on right-click)" aria-haspopup="menu" onClick={menu('actions')}>
           <Icon name="settings" size={14} />
         </button>

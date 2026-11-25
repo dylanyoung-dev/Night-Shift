@@ -126,9 +126,12 @@ const ISSUE_FIELDS = `
   inverseRelations(first: 20) { nodes { type } }
   attachments(first: 10) { nodes { url title sourceType metadata } }
 `
-// Extras the board can do without: whether a document (the spec) is attached, and the links this ticket
-// makes to others (it blocks X). Both are dropped if Linear calls the board query too complex.
-const SPEC_FIELD = 'documents(first: 1) { nodes { id } } relations(first: 20) { nodes { type } }'
+// Extras the board can do without: whether a document (the spec) is attached, the links this ticket
+// makes to others (it blocks X), and which tickets block it. All are dropped if Linear calls the board
+// query too complex (the card then just says Blocked).
+const SPEC_FIELD =
+  'documents(first: 1) { nodes { id } } relations(first: 20) { nodes { type } } ' +
+  'blockers: inverseRelations(first: 10) { nodes { type issue { id identifier title state { type } } } }'
 let specField = true
 
 interface IssueNode {
@@ -150,11 +153,22 @@ interface IssueNode {
   children: { nodes: { state: { type: string } }[] }
   relations?: { nodes: { type: string }[] }
   inverseRelations: { nodes: { type: string }[] }
+  blockers?: { nodes: { type: string; issue: { id: string; identifier: string; title: string; state: { type: string } } | null }[] }
   attachments: { nodes: { url: string; title: string; sourceType: string | null; metadata: Record<string, unknown> | null }[] }
   documents?: { nodes: { id: string }[] }
 }
 
 const PR_URL = /\/pull\/(\d+)/
+
+// Blocked while a blocking ticket is still open. Without the blockers' details (query trimmed for
+// complexity), any blocks link counts, as before.
+function blockedBy(n: IssueNode): Pick<LinearIssue, 'blocked' | 'blockedBy'> {
+  if (!n.blockers) return { blocked: n.inverseRelations.nodes.some((r) => r.type === 'blocks') }
+  const open = n.blockers.nodes
+    .filter((r) => r.type === 'blocks' && r.issue && r.issue.state.type !== 'completed' && r.issue.state.type !== 'canceled')
+    .map((r) => ({ id: r.issue!.id, identifier: r.issue!.identifier, title: r.issue!.title }))
+  return { blocked: open.length > 0, blockedBy: open }
+}
 
 function pullRequests(n: IssueNode): LinearPullRequest[] {
   const seen = new Set<string>()
@@ -207,7 +221,7 @@ function toIssue(n: IssueNode): LinearIssue {
     parent: n.parent,
     projectId: n.project?.id ?? null,
     milestone: n.projectMilestone ? { id: n.projectMilestone.id, name: n.projectMilestone.name } : null,
-    blocked: n.inverseRelations.nodes.some((r) => r.type === 'blocks'),
+    ...blockedBy(n),
     // Parent, sub-issues and links to other tickets. "similar" is Linear's own suggestion, not a link anyone made.
     relationCount:
       (n.parent ? 1 : 0) + kids.length + [...(n.relations?.nodes ?? []), ...n.inverseRelations.nodes].filter((r) => r.type !== 'similar').length,

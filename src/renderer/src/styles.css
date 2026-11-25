@@ -1166,6 +1166,10 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .prio-btn.p2 { color: var(--prio-high); }
 .prio-btn.p3 { color: var(--text-2); }
 .blocked-tag { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; font-weight: 500; color: var(--failed-ink); white-space: nowrap; }
+.blocked-by { background: none; border: 0; padding: 1px 3px; margin: -1px -3px; border-radius: 4px; font-family: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.blocked-by:hover { background: color-mix(in srgb, var(--failed-ink) 12%, transparent); }
+.blocked-by:focus-visible { outline: 2px solid var(--failed-ink); outline-offset: 1px; }
+.blocked-more { opacity: 0.75; font-weight: 400; }
 .card .avatar { width: 22px; height: 22px; flex-basis: 22px; font-size: 10px; background: var(--text-2); color: var(--surface); }
 .card .avatar.unassigned { background: none; color: var(--muted); }
 .card-title .title { font-size: 14px; line-height: 1.35; font-weight: 500; color: var(--text); }
