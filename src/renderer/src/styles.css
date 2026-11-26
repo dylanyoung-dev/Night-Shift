@@ -892,6 +892,9 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .md ul.md-tasks { list-style: none; padding-left: 4px; }
 .md ul.md-tasks > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
 .md ul.md-tasks > li > ul, .md ul.md-tasks > li > ol { flex-basis: 100%; }
+/* Long text wraps beside the checkbox instead of dropping below it. */
+.md ul.md-tasks > li > input { flex: none; }
+.md ul.md-tasks > li > span { flex: 1 1 0; min-width: 0; }
 .md li.done > span { color: var(--muted); text-decoration: line-through; }
 .md code { font-family: var(--font-mono); font-size: 12px; background: var(--raised); border: 1px solid var(--line-2); border-radius: 4px; padding: 0 4px; }
 .md pre.md-code { background: var(--bg); border: 1px solid var(--line-2); border-radius: 8px; padding: 10px 12px; overflow: auto; margin: 0 0 10px; }
