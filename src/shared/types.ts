@@ -191,7 +191,7 @@ export interface LinearIssue {
   projectId: string | null // Linear project, if any
   milestone: { id: string; name: string } | null // the project milestone it belongs to
   blocked: boolean // another issue blocks this one
-  blockedBy?: { id: string; identifier: string; title: string }[] // the open tickets blocking it; missing when Linear didn't say
+  blockedBy?: { id: string; identifier: string; title: string; done?: boolean }[] // tickets that block it (done: completed or canceled); missing when Linear didn't say
   subIssues: { done: number; total: number } | null
   relationCount?: number // parent + sub-issues + linked tickets; missing on data from older builds
   pullRequests: LinearPullRequest[]

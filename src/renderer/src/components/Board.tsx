@@ -237,6 +237,10 @@ function Card({
   const type = typeOf(issue)
   const tags = issue.labels.filter((l) => l.id !== type?.label.id)
   const relations = issue.relationCount ?? 0
+  const blockers = issue.blockedBy ?? []
+  const openBlockers = blockers.filter((b) => !b.done)
+  const unblocked = blockers.length > 0 && openBlockers.length === 0
+  const shownBlockers = unblocked ? blockers : openBlockers
   const stop = (fn: () => void) => (e: React.MouseEvent) => {
     e.stopPropagation()
     fn()
@@ -294,30 +298,32 @@ function Card({
           </button>
         )}
         <span className="spacer" />
-        {issue.blocked &&
-          (issue.blockedBy?.length ? (
-            // Which ticket blocks it, kept short: the first one's number, "+N" for more, the rest on hover.
-            // A click shows the blocker on the board when it's there.
-            <button
-              type="button"
-              className="blocked-tag blocked-by"
-              title={`Blocked by:\n${issue.blockedBy.map((b) => `${b.identifier}  ${b.title}`).join('\n')}`}
-              aria-label={`Blocked by ${issue.blockedBy.map((b) => b.identifier).join(', ')}`}
-              onClick={(e) => {
-                e.stopPropagation()
-                onShowIssue(issue.blockedBy![0].id)
-              }}
-            >
-              <Icon name="blocked" size={12} width={2.2} />
-              {issue.blockedBy[0].identifier}
-              {issue.blockedBy.length > 1 && <span className="blocked-more">+{issue.blockedBy.length - 1}</span>}
-            </button>
-          ) : (
+        {blockers.length > 0 ? (
+          // Which ticket blocks it, kept short: the first one's number, "+N" for more, the rest on hover.
+          // Red while any blocker is open; green with a check once they're all done. A click shows the
+          // blocker on the board when it's there.
+          <button
+            type="button"
+            className={`blocked-tag blocked-by${unblocked ? ' cleared' : ''}`}
+            title={`${unblocked ? 'Was blocked by (now done)' : 'Blocked by'}:\n${blockers.map((b) => `${b.identifier}  ${b.title}${b.done ? '  (done)' : ''}`).join('\n')}`}
+            aria-label={`${unblocked ? 'Blockers done' : 'Blocked by'}: ${shownBlockers.map((b) => b.identifier).join(', ')}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onShowIssue(shownBlockers[0].id)
+            }}
+          >
+            <Icon name={unblocked ? 'check' : 'blocked'} size={12} width={2.2} />
+            {shownBlockers[0].identifier}
+            {shownBlockers.length > 1 && <span className="blocked-more">+{shownBlockers.length - 1}</span>}
+          </button>
+        ) : (
+          issue.blocked && (
             <span className="blocked-tag" title="Blocked by another ticket">
               <Icon name="blocked" size={12} width={2.2} />
               Blocked
             </span>
-          ))}
+          )
+        )}
         <button type="button" className="chip-btn card-gear" aria-label={`Settings for ${issue.identifier}`} title="Status, priority, assignee, labels and more (also on right-click)" aria-haspopup="menu" onClick={menu('actions')}>
           <Icon name="settings" size={14} />
         </button>

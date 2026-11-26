@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { isActiveRun, type LinearIssue, type Run, type StepChoice } from '../../../shared/types'
 import Composer, { composerShown } from './Composer'
 import LogText from './LogText'
@@ -65,17 +65,36 @@ export default function RunDetails({ issue, run, history, log, sets, onStart, on
   const logRef = useRef<HTMLPreElement>(null)
   // Follows new output only while you're at the bottom, so scrolling up to read isn't undone by the
   // next line. Another run (or ticket) starts at the bottom again.
+  // Opening a ticket's run always lands at the bottom, also when the log or the panel changes size
+  // after it opens (the full log arriving, fonts, the panel's sections filling in). Only your own
+  // scrolling (wheel, keys, dragging the scrollbar) stops it following.
   const atBottom = useRef(true)
-  useEffect(() => {
-    atBottom.current = true
-  }, [run?.id])
-  useEffect(() => {
+  const userAt = useRef(0) // when you last scrolled by hand
+  const stick = (): void => {
     const el = logRef.current
     if (el && atBottom.current) el.scrollTop = el.scrollHeight
-  }, [log])
+  }
+  useLayoutEffect(() => {
+    atBottom.current = true
+    stick()
+  }, [run?.id, issue?.id])
+  useLayoutEffect(stick, [log])
+  useEffect(() => {
+    const el = logRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(stick)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [run?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const byHand = (): void => {
+    userAt.current = Date.now()
+  }
   const onLogScroll = (): void => {
     const el = logRef.current
-    if (el) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+    if (!el) return
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+    if (Date.now() - userAt.current < 1000) atBottom.current = bottom
+    else if (!bottom) stick() // moved by a size change, not by you: stay at the bottom
   }
 
   const active = run && isActiveRun(run.status)
@@ -165,7 +184,7 @@ export default function RunDetails({ issue, run, history, log, sets, onStart, on
             <div className="sec-row">
               <div className="sec-label">Live log</div>
             </div>
-            <pre className="log live-log" ref={logRef} tabIndex={0} aria-label="Live log output" onScroll={onLogScroll}>
+            <pre className="log live-log" ref={logRef} tabIndex={0} aria-label="Live log output" onScroll={onLogScroll} onWheel={byHand} onPointerDown={byHand} onKeyDown={byHand} onTouchMove={byHand}>
               {stripAnsi(log) ? <LogText text={stripAnsi(log)} /> : 'No output yet.'}
             </pre>
           </section>

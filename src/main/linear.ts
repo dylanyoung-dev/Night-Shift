@@ -164,10 +164,15 @@ const PR_URL = /\/pull\/(\d+)/
 // complexity), any blocks link counts, as before.
 function blockedBy(n: IssueNode): Pick<LinearIssue, 'blocked' | 'blockedBy'> {
   if (!n.blockers) return { blocked: n.inverseRelations.nodes.some((r) => r.type === 'blocks') }
-  const open = n.blockers.nodes
-    .filter((r) => r.type === 'blocks' && r.issue && r.issue.state.type !== 'completed' && r.issue.state.type !== 'canceled')
-    .map((r) => ({ id: r.issue!.id, identifier: r.issue!.identifier, title: r.issue!.title }))
-  return { blocked: open.length > 0, blockedBy: open }
+  const all = n.blockers.nodes
+    .filter((r) => r.type === 'blocks' && r.issue)
+    .map((r) => ({
+      id: r.issue!.id,
+      identifier: r.issue!.identifier,
+      title: r.issue!.title,
+      done: r.issue!.state.type === 'completed' || r.issue!.state.type === 'canceled'
+    }))
+  return { blocked: all.some((b) => !b.done), blockedBy: all }
 }
 
 function pullRequests(n: IssueNode): LinearPullRequest[] {
