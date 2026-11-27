@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { isActiveRun, type LinearIssue, type Run, type StepChoice } from '../../../shared/types'
 import Composer, { composerShown } from './Composer'
 import LogText from './LogText'
@@ -59,6 +59,8 @@ function StepsInfo({ run }: { run: Run }): JSX.Element {
   )
 }
 
+const RECENT_RUNS = 3
+
 // The Run tab of the ticket panel: facts about the latest run, every run on the ticket, the steps,
 // the live log, and a footer with the reply box and the actions that can be started for the ticket's state.
 export default function RunDetails({ issue, run, history, log, sets, onStart, onStop, onOpenLog }: RunDetailsProps): JSX.Element {
@@ -69,6 +71,10 @@ export default function RunDetails({ issue, run, history, log, sets, onStart, on
   // after it opens (the full log arriving, fonts, the panel's sections filling in). Only your own
   // scrolling (wheel, keys, dragging the scrollbar) stops it following.
   const atBottom = useRef(true)
+  // The newest few runs; the rest behind "Show all" (tickets in review can collect many re-runs).
+  // A run still going is always listed.
+  const [allRuns, setAllRuns] = useState(false)
+  useEffect(() => setAllRuns(false), [issue?.id])
   const userAt = useRef(0) // when you last scrolled by hand
   const stick = (): void => {
     const el = logRef.current
@@ -100,6 +106,7 @@ export default function RunDetails({ issue, run, history, log, sets, onStart, on
   const active = run && isActiveRun(run.status)
   const step = run && run.currentStep >= 0 ? run.steps[run.currentStep] : undefined
   const runs = history?.length ? history : run ? [run] : []
+  const shownRuns = allRuns ? runs : runs.filter((r, i) => i < RECENT_RUNS || isActiveRun(r.status))
   const worktree = !run ? 'Not started' : run.worktreeMode === 'agent' ? 'Set up by the agent' : run.worktree ? lastPart(run.worktree) : 'Not set up yet'
 
   const buttons = (
@@ -152,7 +159,7 @@ export default function RunDetails({ issue, run, history, log, sets, onStart, on
           <section className="run-sec" aria-label="Runs">
             <div className="sec-label">Runs</div>
             <ul className="run-list">
-              {runs.map((r, i) => (
+              {shownRuns.map((r, i) => (
                 <li key={r.id} className="run-li">
                   <button type="button" className={`run-item${i === 0 ? ' latest' : ''}`} title={`Open the log of ${r.stepsName} (${runLabel[r.status]})`} onClick={() => onOpenLog(r.id)}>
                     <span className="dot" style={{ background: runColor[r.status] }} aria-hidden="true" />
@@ -176,6 +183,11 @@ export default function RunDetails({ issue, run, history, log, sets, onStart, on
                 </li>
               ))}
             </ul>
+            {runs.length > RECENT_RUNS && (
+              <button type="button" className="run-more" aria-expanded={allRuns} onClick={() => setAllRuns(!allRuns)}>
+                {allRuns ? 'Show fewer' : `Show all ${runs.length} runs`}
+              </button>
+            )}
           </section>
         )}
 
