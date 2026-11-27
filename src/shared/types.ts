@@ -143,6 +143,7 @@ export interface Settings {
   mode: 'local' | 'remote' // remote: actions, runs and shared settings come from the host
   remote: RemoteTarget // the host, in remote mode
   boardRefreshMinutes: number // this machine: how often the board reloads from Linear
+  mcp?: { enabled: boolean } // this machine: Claude Desktop can read the runs (read-only, local only)
   // Not stored; filled in when settings are read.
   sharedRevs?: Record<string, string> // revisions of the shared items, sent back with a save
   saveError?: { message: string; conflict?: SaveConflict } // the last save was refused (shared items)
@@ -665,6 +666,7 @@ export interface NightShiftApi {
   getTicketStats?(days: number, refresh?: boolean): Promise<TicketStats> // refresh: rebuild now and wait
   onTicketStats?(cb: (days: number, stats: TicketStats) => void): () => void // a background rebuild finished
   onIssueSynced?(cb: (issueId: string) => void): () => void // one ticket was re-read from Linear (after a run step, an edit…)
+  getMcpInfo?(): Promise<{ enabled: boolean; running: boolean; config: string }> // Claude Desktop's MCP setup
   getLimits?(): Promise<PlanLimits | null>
   checkLimits?(): Promise<PlanLimits | { error: string }>
   onLimits?(cb: (l: PlanLimits) => void): () => void

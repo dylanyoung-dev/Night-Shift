@@ -19,6 +19,53 @@ interface Props {
   onSaved(s: Settings): void
 }
 
+// Claude Desktop can read the runs through a local-only MCP server (read-only). Shows the entry to
+// paste into Claude Desktop's config; Night Shift never edits that file itself.
+function ClaudeDesktop({ enabled, savedEnabled, onChange }: { enabled: boolean; savedEnabled: boolean; onChange(v: boolean): void }): JSX.Element {
+  const [info, setInfo] = useState<{ running: boolean; config: string } | null>(null)
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    void window.nightShift.getMcpInfo?.().then(setInfo)
+  }, [savedEnabled])
+  return (
+    <div className="form">
+      <label className="field wide check-field">
+        <span className="inputrow">
+          <input type="checkbox" checked={enabled} onChange={(e) => onChange(e.target.checked)} />
+          Let Claude Desktop read agent runs
+        </span>
+        <span className="note">
+          Read-only: Claude Desktop can list runs, read their steps and logs, and search them, for audits. It can't start, stop or change anything. Only programs on this machine can connect.
+          {info && (savedEnabled ? (info.running ? ' Listening now.' : ' Not listening yet.') : ' Off.')}
+          {enabled !== savedEnabled && ' Save settings to apply.'}
+        </span>
+      </label>
+      {enabled && info && (
+        <div className="field wide">
+          <span>
+            Add this to Claude Desktop's config (Claude Desktop → Settings → Developer → Edit Config), inside its <span className="mono">mcpServers</span> if it already has one, then restart Claude Desktop. Night Shift must be open for the tools to answer.
+          </span>
+          <pre className="mcp-config mono">{info.config}</pre>
+          <div className="inputrow">
+            <button
+              className="btn small"
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(info.config)
+                setCopied(true)
+                window.setTimeout(() => setCopied(false), 1500)
+              }}
+            >
+              {copied ? 'Copied' : 'Copy config'}
+            </button>
+            <span className="note">Then ask Claude, for example: “Audit the last 10 Planner runs.”</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const STATE_TYPES = ['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled']
 
 const ALL_SECTIONS = [
@@ -30,6 +77,7 @@ const ALL_SECTIONS = [
   { id: 'worktrees', label: 'Worktrees', local: true },
   { id: 'runs', label: 'Runs', local: true },
   { id: 'hostmachine', label: 'Host machine', remote: true },
+  { id: 'claude', label: 'Claude Desktop' },
   { id: 'sharing', label: 'Share settings' },
   { id: 'about', label: 'About' }
 ]
@@ -778,6 +826,13 @@ export default function SettingsView({ settings, onSaved }: Props): JSX.Element 
         </section>
           </>
         )}
+        <section id="claude" className="settings-section" aria-labelledby="claude-title">
+          <div className="st-card-head">
+            <h2 id="claude-title">Claude Desktop</h2>
+            <p className="section-intro">Ask Claude Desktop about your agent runs: audit one run, the last few, or every run of an action.</p>
+          </div>
+          <ClaudeDesktop enabled={form.mcp?.enabled !== false} savedEnabled={settings.mcp?.enabled !== false} onChange={(v) => set('mcp', { enabled: v })} />
+        </section>
         <section id="sharing" className="settings-section" aria-labelledby="sharing-title">
           <div className="st-card-head">
             <h2 id="sharing-title">Share settings</h2>

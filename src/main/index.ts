@@ -10,7 +10,8 @@ import { globalSet, loadSteps, parseSteps, saveSteps, setForState, setsForState,
 import { Runner, resolveWorktreePath } from './runner'
 import { cleanupWorktrees } from './worktreeCleanup'
 import { fetchPrStatuses, mergePr, cancelPrChecks, fetchPrFiles, submitPrReview } from './github'
-import { getUsage, usageProgress } from './usage'
+import { getUsage, sessionTotals, usageProgress } from './usage'
+import { McpServer } from './mcpServer'
 import { cachedTicketStats, onTicketStatsUpdated, refreshTicketStats, TICKET_STATS_EVERY } from './ticketStats'
 import { checkLimits, getLimits, loadLimits, onLimitsChange } from './limits'
 import { installUpdateNow, checkForUpdatesNow, startUpdater, updateState } from './updater'
@@ -346,6 +347,47 @@ function startGlobalHere(name: string): Run | { error: string } {
   return runner.startGlobal(set)
 }
 
+// Claude Desktop's read-only view of the runs (see mcpServer.ts). Runs and logs come from wherever this
+// window gets them: this machine, or the host when connected to one.
+let mcp: McpServer | null = null
+function mcpScript(): string {
+  return app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'mcp-bridge.cjs') : join(app.getAppPath(), 'resources', 'mcp-bridge.cjs')
+}
+function applyMcp(): void {
+  if (!mcp)
+    mcp = new McpServer(
+      {
+        version: app.getVersion(),
+        runs: async () => {
+          if (!remoteMode()) return runner.list()
+          const r = await remote.call<Run[]>('GET', '/runs')
+          if (Array.isArray(r)) return r
+          throw new Error(`Couldn't get the runs from the host: ${'error' in r ? r.error : 'no answer'}`)
+        },
+        log: async (id) => {
+          if (!remoteMode()) return readLogHere(id, 8 * 1024 * 1024)
+          const r = await remote.text(`/runs/${encodeURIComponent(id)}/log`)
+          return typeof r === 'string' ? r : null
+        },
+        tokens: async (ids) => {
+          if (remoteMode()) return null // the transcripts are on the host
+          const totals = await sessionTotals(new Set(ids))
+          if (!totals.size) return null
+          let tokens = 0
+          let output = 0
+          for (const t of totals.values()) {
+            tokens += t.tokens
+            output += t.output
+          }
+          return { tokens, output }
+        }
+      },
+      join(app.getPath('userData'), 'mcp.json')
+    )
+  if (getSettings().mcp?.enabled === false) mcp.stop()
+  else if (!mcp.running) mcp.start().catch((err: Error) => log.warn(`mcp: could not start: ${err.message}`))
+}
+
 function usageHere(days: number, refresh: boolean): ReturnType<typeof getUsage> {
   const sessions = new Set<string>()
   for (const r of runner.list()) for (const st of r.steps) if (st.sessionId) sessions.add(st.sessionId)
@@ -656,6 +698,7 @@ function registerIpc(): void {
     }
     const s = updateSettings(u)
     applyTheme()
+    applyMcp()
     const modeChanged = s.mode !== before.mode || s.remote.host !== before.remote.host || s.remote.port !== before.remote.port
     if (modeChanged) {
       log.info(s.mode === 'remote' ? `remote mode: using ${s.remote.host}:${s.remote.port}` : 'remote mode off: this machine runs its own agents')
@@ -669,6 +712,16 @@ function registerIpc(): void {
     return { ...effectiveSettings(), ...(saveError ? { saveError } : {}) }
   })
   ipcMain.handle('remote:status', () => remote.view())
+  // What to paste into Claude Desktop's config. Never includes the token (that's in mcp.json, for the bridge).
+  ipcMain.handle('mcp:info', () => ({
+    enabled: getSettings().mcp?.enabled !== false,
+    running: !!mcp?.running,
+    config: JSON.stringify(
+      { mcpServers: { 'night-shift': { command: process.execPath, args: [mcpScript(), app.getPath('userData')], env: { ELECTRON_RUN_AS_NODE: '1' } } } },
+      null,
+      2
+    )
+  }))
   ipcMain.handle('remote:test', async (_e, t: RemoteTarget) => {
     const target = { host: String(t?.host ?? '').trim(), port: Number(t?.port) || 0 }
     if (!target.host || !target.port) return { error: 'Enter the host name and port.' }
@@ -1063,6 +1116,7 @@ app.whenReady().then(async () => {
   loadLimits(join(app.getPath('userData'), 'runs', 'logs'))
   onLimitsChange((l) => send('limits', l))
   registerIpc()
+  applyMcp()
   nativeTheme.themeSource = getSettings().theme
   if (!HEADLESS) createWindow()
   updateTray()
@@ -1084,6 +1138,8 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
+app.on('will-quit', () => mcp?.stop())
 
 // A host keeps running with no window (started headless at sign-in, or the window was closed);
 // the tray icon opens it again or quits.

@@ -32,6 +32,7 @@ const api: NightShiftApi = {
   getTicketStats: (days: number, refresh?: boolean) => ipcRenderer.invoke('usage:tickets', days, refresh),
   onTicketStats: (cb: (days: number, stats: TicketStats) => void) => listen<[number, TicketStats]>('ticket-stats', cb),
   onIssueSynced: (cb: (issueId: string) => void) => listen<[string]>('issue-synced', cb),
+  getMcpInfo: () => ipcRenderer.invoke('mcp:info'),
   getHostStatus: () => ipcRenderer.invoke('host:status'),
   getRemoteStatus: () => ipcRenderer.invoke('remote:status'),
   onRemoteStatus: (cb) => listen<[RemoteStatus]>('remote', cb),

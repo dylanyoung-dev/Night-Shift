@@ -29,7 +29,8 @@ const defaults: Stored = {
   host: { enabled: false, name: '', port: DEFAULT_HOST_PORT, allowedLogins: [] },
   mode: 'local',
   remote: { host: '', port: DEFAULT_HOST_PORT },
-  boardRefreshMinutes: 5
+  boardRefreshMinutes: 5,
+  mcp: { enabled: true }
 }
 
 let cache: Stored | null = null
@@ -221,6 +222,7 @@ export function updateSettings(update: SettingsUpdate): Settings {
     port: Number.isInteger(rport) && rport >= 1 && rport <= 65535 ? rport : DEFAULT_HOST_PORT
   }
   s.boardRefreshMinutes = clamp(s.boardRefreshMinutes, 1, 120, 5)
+  s.mcp = { enabled: s.mcp?.enabled !== false }
   delete (s as Partial<Settings>).sharedRevs
   delete (s as Partial<Settings>).saveError
   s.columnOrder = Array.isArray(s.columnOrder) ? [...new Set(s.columnOrder.map(String).filter(Boolean))] : []
