@@ -4,7 +4,7 @@ import type { Writable } from 'stream'
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'fs'
 import { isAbsolute, join, normalize } from 'path'
 import { homedir, hostname } from 'os'
-import { CLAUDE_RUN_FLAGS, DEFAULT_WORKTREE_PATH, globalRunKey, isActiveRun, resumableStep, setLabel } from '../shared/types'
+import { CLAUDE_RUN_FLAGS, DEFAULT_WORKTREE_PATH, FINISH_RUN_EXIT_CODE, globalRunKey, isActiveRun, resumableStep, setLabel } from '../shared/types'
 import type { LinearIssue, Run, RunStep, StepDef, StepSet, WorktreeMode } from '../shared/types'
 import { ClaudeStreamFormatter, needsYou, parseClaudeCommand } from './claudeStream'
 import { planAfterRun, type FailurePlan } from './failure'
@@ -355,6 +355,7 @@ export class Runner {
       this.changed()
 
       let ok = false
+      let finish = false // the script asked to end the run here, as done
       try {
         if (step.type === 'linear' && run.global) {
           this.log(run, `\n▸ ${step.name}: a global action has no ticket to move\n`)
@@ -371,7 +372,9 @@ export class Runner {
           const cwd = this.cwdFor(step, run, worktreeReady)
           if (step.type === 'claude') rs.cwd = cwd
           this.log(run, `\n▸ ${step.name}\n$ ${cmd}\n  (in ${cwd})\n`)
-          ok = (await this.shell(a, cmd, cwd, step.type === 'claude')) === 0
+          const code = await this.shell(a, cmd, cwd, step.type === 'claude')
+          ok = code === 0
+          if (step.type === 'script' && code === FINISH_RUN_EXIT_CODE) finish = true
         }
       } catch (err) {
         this.log(run, `Error: ${(err as Error).message}\n`)
@@ -385,6 +388,13 @@ export class Runner {
         run.steps.slice(i + offset + 1).forEach((s) => (s.status = 'skipped'))
         run.status = 'stopped'
         this.log(run, '\nStopped by you.\n')
+        break
+      }
+      if (finish) {
+        rs.status = 'done'
+        const rest = run.steps.slice(i + offset + 1)
+        rest.forEach((s) => (s.status = 'skipped'))
+        this.log(run, `\n▸ ${step.name} finished the run (exit ${FINISH_RUN_EXIT_CODE})${rest.length ? `: skipped ${rest.map((s) => s.name).join(', ')}` : ''}.\n`)
         break
       }
       rs.status = ok ? 'done' : 'failed'
@@ -457,6 +467,7 @@ export class Runner {
     return new Promise((resolve) => {
       const env: NodeJS.ProcessEnv = { ...process.env }
       for (const [k, val] of Object.entries(this.vars(a.run))) env[`NS_${k}`] = val
+      env.NS_FINISH_CODE = String(FINISH_RUN_EXIT_CODE) // `exit $NS_FINISH_CODE` ends the run as done
       // `claude -p` stops background agents 10 minutes after the main turn ends. A /build that hands
       // work to a background agent would be cut off mid-way, so wait for them (Stop still works).
       if (claude && env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS === undefined) env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = '0'

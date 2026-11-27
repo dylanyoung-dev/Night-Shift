@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import SaveStatus from './SaveStatus'
-import { CLAUDE_RUN_FLAGS, DEFAULT_CLAUDE_COMMAND, DEFAULT_FAILURE_LABEL, DEFAULT_FAILURE_RETRIES, setLabel, type LinearState, type OnFailure, type SaveConflict, type Settings, type StepDef, type StepSet, type StepsFile, type WorktreeMode } from '../../../shared/types'
+import { CLAUDE_RUN_FLAGS, DEFAULT_CLAUDE_COMMAND, DEFAULT_FAILURE_LABEL, DEFAULT_FAILURE_RETRIES, FINISH_RUN_EXIT_CODE, setLabel, type LinearState, type OnFailure, type SaveConflict, type Settings, type StepDef, type StepSet, type StepsFile, type WorktreeMode } from '../../../shared/types'
 import { groupSteps } from '../util'
 import { StatusIcon } from './LinearIcons'
 import { Icon } from './Icons'
@@ -327,6 +327,11 @@ export default function StepsView({ settings, states }: Props): JSX.Element {
                   // One command: Enter doesn't add a line (long commands still wrap).
                   onKeyDown={(e) => e.key === 'Enter' && e.preventDefault()}
                 />
+              )}
+              {st.type === 'script' && (
+                <p className="pipe-hint">
+                  Exit with code {FINISH_RUN_EXIT_CODE} (<span className="mono">exit $NS_FINISH_CODE</span>) to end the run as done and skip the steps after this one.
+                </p>
               )}
               {missing.length > 0 && (
                 <div className="step-warn">

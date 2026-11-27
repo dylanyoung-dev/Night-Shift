@@ -143,7 +143,7 @@ export interface Settings {
   mode: 'local' | 'remote' // remote: actions, runs and shared settings come from the host
   remote: RemoteTarget // the host, in remote mode
   boardRefreshMinutes: number // this machine: how often the board reloads from Linear
-  mcp?: { enabled: boolean } // this machine: Claude Desktop can read the runs (read-only, local only)
+  mcp?: { enabled: boolean } // this machine: Claude Desktop can read the runs and read/edit the actions (local only)
   // Not stored; filled in when settings are read.
   sharedRevs?: Record<string, string> // revisions of the shared items, sent back with a save
   saveError?: { message: string; conflict?: SaveConflict } // the last save was refused (shared items)
@@ -339,6 +339,10 @@ export interface PrStatus {
 
 // cleanup: removes the worktrees of tickets that are done or canceled in Linear (built in, no command)
 export type StepType = 'script' | 'claude' | 'linear' | 'cleanup'
+// A script step that exits with this code ends the run as done: the remaining steps are skipped.
+// For a check step that decides nothing more is needed (e.g. whether Claude has anything to do).
+// Scripts also get it as $NS_FINISH_CODE.
+export const FINISH_RUN_EXIT_CODE = 78
 export type OnFail = 'stop' | 'continue'
 
 export interface StepDef {

@@ -2,22 +2,65 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomBytes, timingSafeEqual } from 'crypto'
 import { rmSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
-import type { Run } from '../shared/types'
+import type { Run, StepSet, StepsFile } from '../shared/types'
 import { log } from './log'
 
-// A read-only MCP server for Claude Desktop: the agent runs, their steps and logs, for audits.
+// An MCP server for Claude Desktop: the agent runs, their steps and logs, for audits (read-only), and
+// the actions (step sets) to read, create and update.
 // Claude Desktop starts local MCP servers as a command over stdio, so it runs the small bridge in
 // resources/mcp-bridge.cjs, which passes each message to this endpoint. The endpoint:
 //  - listens on 127.0.0.1 only, on a random port, with a token made at each start;
 //  - refuses requests with an Origin header (a web page in a browser), or without the token;
 //  - writes { port, token, pid } to mcp.json in the app's data folder for the bridge, and removes it on stop.
-// Nothing here starts, stops or changes anything.
+// It never starts or stops runs. The only change it can make is saving an action, through the same
+// save (and conflict check) as the Actions page.
 
 export interface McpOps {
   runs(): Promise<Run[]> // newest first; from the host when connected to one
   log(runId: string): Promise<string | null> // the whole log (capped), or null when unknown
   tokens?(sessionIds: string[]): Promise<{ tokens: number; output: number } | null> // this machine's transcripts only
+  actions(): Promise<StepsFile> // with revs; from the host when connected to one
+  saveActions(sets: StepSet[], revs: Record<string, string>): Promise<StepsFile | { error: string }>
+  stateNames(): string[] // the team's Linear states, for an action's states and moveTo
   version: string
+}
+
+const actionKey = (name: string): string => `action:${name.trim().toLowerCase()}`
+const ACTION_SCHEMA = {
+  type: 'object',
+  description: 'An action (a set of steps). Leave out optional fields you do not need.',
+  properties: {
+    name: { type: 'string', description: 'Unique name.' },
+    label: { type: 'string', description: "Button text on a ticket's card; defaults to the name." },
+    global: { type: 'boolean', description: 'Not tied to a ticket: runs from the base branch, started from the Run menu or an automation. A global action has no states, worktree or onFailure.' },
+    states: { type: 'array', items: { type: 'string' }, description: 'Linear state names whose tickets offer this action (empty for global).' },
+    worktree: {
+      type: 'object',
+      properties: { mode: { type: 'string', enum: ['nightshift', 'agent'] }, path: { type: 'string', description: 'Template; $REPO $ID $TICKET $BRANCH are filled in.' } }
+    },
+    steps: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          type: { type: 'string', enum: ['script', 'claude', 'linear', 'cleanup'] },
+          run: { type: 'string', description: 'Shell command (script, claude). $TICKET $ID $BRANCH $WORKTREE $BASE $REPO are filled in. A script exiting 78 ends the run as done.' },
+          moveTo: { type: 'string', description: 'Linear state name (linear steps).' },
+          cwd: { type: 'string', enum: ['repo', 'worktree'] },
+          onFail: { type: 'string', enum: ['stop', 'continue'] },
+          only: { type: 'string', enum: ['nightshift', 'agent'], description: 'Run only in that worktree mode.' }
+        },
+        required: ['name', 'type']
+      }
+    },
+    onFailure: {
+      type: 'object',
+      description: 'When a run fails: label the ticket, comment and send it back.',
+      properties: { moveTo: { type: 'string' }, label: { type: 'string' }, comment: { type: 'boolean' }, retries: { type: 'number' } }
+    }
+  },
+  required: ['name', 'steps']
 }
 
 const PROTOCOL = '2025-06-18'
@@ -86,6 +129,31 @@ const TOOLS = [
     name: 'list_actions',
     description: 'The actions (run types) in the run history, with how many runs each has, how they ended, and when each last ran.',
     inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'get_action_configs',
+    description:
+      "Every action's full configuration (states, worktree, steps with their commands, onFailure), each with its rev, plus the team's Linear state names and any problems in the actions file.",
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'get_action_config',
+    description: "One action's full configuration and its rev (pass the rev to save_action_config when updating it).",
+    inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }
+  },
+  {
+    name: 'save_action_config',
+    description:
+      "Create an action, or replace an existing one's whole configuration (matched by name, or by renameFrom to rename it). Send the full action, not just the changed fields. Pass the rev from get_action_config so a change made meanwhile (on the Actions page or another machine) isn't overwritten. Doesn't start anything.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: ACTION_SCHEMA,
+        rev: { type: 'string', description: "The action's rev from get_action_config (updates only)." },
+        renameFrom: { type: 'string', description: 'The current name, when renaming.' }
+      },
+      required: ['action']
+    }
   }
 ]
 
@@ -193,10 +261,10 @@ export class McpServer {
       case 'initialize':
         return reply({
           protocolVersion: str(msg.params?.protocolVersion) || PROTOCOL,
-          capabilities: { tools: {} },
+          capabilities: { tools: { listChanged: true } }, // the bridge says when a new version brings new tools
           serverInfo: { name: 'night-shift', version: this.ops.version },
           instructions:
-            'Read-only access to Night Shift agent runs (steps, logs, outcomes) for audits. Start with list_runs or list_actions, then get_run and get_run_log for detail.'
+            'Night Shift agent runs (steps, logs, outcomes) for audits, read-only: start with list_runs or list_actions, then get_run and get_run_log. Actions (the step sets runs follow) can be read with get_action_configs and created or updated with save_action_config. Nothing here starts or stops runs.'
         })
       case 'ping':
         return reply({})
@@ -218,6 +286,7 @@ export class McpServer {
   }
 
   private async call(name: string, a: Args): Promise<string> {
+    if (name === 'get_action_configs' || name === 'get_action_config' || name === 'save_action_config') return this.actionTool(name, a)
     const runs = await this.ops.runs()
     const find = (): Run => {
       const id = str(a.runId)
@@ -303,5 +372,48 @@ export class McpServer {
       default:
         throw new Error(`Unknown tool: ${name}`)
     }
+  }
+  private async actionTool(name: string, a: Args): Promise<string> {
+    const f = await this.ops.actions()
+    const revs = f.revs ?? {}
+    const view = (s: StepSet): Record<string, unknown> => ({ ...s, rev: revs[actionKey(s.name)] ?? null })
+    const find = (n: string): StepSet | undefined => f.sets.find((s) => s.name.trim().toLowerCase() === n.trim().toLowerCase())
+    if (name === 'get_action_configs')
+      return JSON.stringify(
+        { file: f.path, ...(f.error ? { error: f.error } : {}), ...(f.problems?.length ? { problems: f.problems } : {}), linearStates: this.ops.stateNames(), actions: f.sets.map(view) },
+        null,
+        1
+      )
+    if (name === 'get_action_config') {
+      const s = find(str(a.name))
+      if (!s) throw new Error(`No action named "${str(a.name)}". Actions: ${f.sets.map((x) => x.name).join(', ')}.`)
+      return JSON.stringify(view(s), null, 1)
+    }
+
+    // save_action_config
+    if (f.error) throw new Error(`The actions file couldn't be read (${f.error}), so nothing was saved. Fix it on the Actions page first.`)
+    const action = a.action as StepSet | undefined
+    if (!action || typeof action !== 'object' || !str(action.name) || !Array.isArray(action.steps)) throw new Error('Send the whole action, with at least a name and its steps.')
+    const newName = str(action.name)
+    const from = str(a.renameFrom)
+    const existing = from ? find(from) : find(newName)
+    if (from && !existing) throw new Error(`No action named "${from}" to rename.`)
+    if (from && from.toLowerCase() !== newName.toLowerCase() && find(newName)) throw new Error(`There's already an action named "${newName}".`)
+    const nextRevs = { ...revs }
+    if (existing && str(a.rev)) nextRevs[actionKey(existing.name)] = str(a.rev)
+    const sets = existing ? f.sets.map((s) => (s === existing ? { ...action, name: newName } : s)) : [...f.sets, { ...action, name: newName }]
+    const res = await this.ops.saveActions(sets, nextRevs)
+    if ('error' in res && res.error && !('sets' in res)) throw new Error(res.error)
+    const saved = (res as StepsFile).sets.find((s) => s.name.trim().toLowerCase() === newName.toLowerCase())
+    const savedRevs = (res as StepsFile).revs ?? {}
+    return JSON.stringify(
+      {
+        saved: existing ? (from ? `renamed "${existing.name}" to "${newName}"` : `updated "${newName}"`) : `created "${newName}"`,
+        action: saved ? { ...saved, rev: savedRevs[actionKey(saved.name)] ?? null } : null,
+        ...((res as StepsFile).problems?.length ? { problems: (res as StepsFile).problems } : {})
+      },
+      null,
+      1
+    )
   }
 }

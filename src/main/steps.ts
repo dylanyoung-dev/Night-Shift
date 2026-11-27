@@ -193,6 +193,7 @@ const HEADER = `# Night Shift actions, kept with the app's own data (not in the 
 #   $BASE (in $WORKTREE), started from the Run menu at the top of the board or an automation.
 # worktree (optional, per action): mode: nightshift | agent, path: "D:/worktrees/$ID"  (overrides Settings)
 # step type: script | claude | linear     onFail: stop | continue
+# A script step that exits with code 78 ($NS_FINISH_CODE) ends the run as done and skips the rest.
 # cwd: repo | worktree     only: nightshift | agent  (run the step only in that worktree mode)
 # In agent mode, steps that use $WORKTREE or cwd: worktree are skipped.
 # onFailure (optional, per action): when a run fails, label the ticket, comment, and send it back.

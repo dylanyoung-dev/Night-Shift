@@ -19,7 +19,7 @@ interface Props {
   onSaved(s: Settings): void
 }
 
-// Claude Desktop can read the runs through a local-only MCP server (read-only). Shows the entry to
+// Claude Desktop can read the runs and read or edit the actions through a local-only MCP server. Shows the entry to
 // paste into Claude Desktop's config; Night Shift never edits that file itself.
 function ClaudeDesktop({ enabled, savedEnabled, onChange }: { enabled: boolean; savedEnabled: boolean; onChange(v: boolean): void }): JSX.Element {
   const [info, setInfo] = useState<{ running: boolean; config: string } | null>(null)
@@ -32,10 +32,10 @@ function ClaudeDesktop({ enabled, savedEnabled, onChange }: { enabled: boolean; 
       <label className="field wide check-field">
         <span className="inputrow">
           <input type="checkbox" checked={enabled} onChange={(e) => onChange(e.target.checked)} />
-          Let Claude Desktop read agent runs
+          Let Claude Desktop read agent runs and edit actions
         </span>
         <span className="note">
-          Read-only: Claude Desktop can list runs, read their steps and logs, and search them, for audits. It can't start, stop or change anything. Only programs on this machine can connect.
+          Claude Desktop can list runs, read their steps and logs, and search them, for audits. It can also read actions and create or update them (saved like the Actions page, with the same check for changes made meanwhile). It can't start or stop runs. Only programs on this machine can connect.
           {info && (savedEnabled ? (info.running ? ' Listening now.' : ' Not listening yet.') : ' Off.')}
           {enabled !== savedEnabled && ' Save settings to apply.'}
         </span>

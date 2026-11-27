@@ -347,8 +347,8 @@ function startGlobalHere(name: string): Run | { error: string } {
   return runner.startGlobal(set)
 }
 
-// Claude Desktop's read-only view of the runs (see mcpServer.ts). Runs and logs come from wherever this
-// window gets them: this machine, or the host when connected to one.
+// Claude Desktop's view of the runs (read-only) and the actions (read, create, update), see mcpServer.ts.
+// Everything comes from wherever this window gets it: this machine, or the host when connected to one.
 let mcp: McpServer | null = null
 function mcpScript(): string {
   return app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'mcp-bridge.cjs') : join(app.getAppPath(), 'resources', 'mcp-bridge.cjs')
@@ -380,7 +380,16 @@ function applyMcp(): void {
             output += t.output
           }
           return { tokens, output }
-        }
+        },
+        actions: async () => {
+          if (!remoteMode()) return stepsHere()
+          const r = await viaHost<StepsFile>('GET', '/actions')
+          if ('error' in r && !('sets' in r)) throw new Error(`Couldn't get the actions from the host: ${r.error}`)
+          return r as StepsFile
+        },
+        saveActions: async (sets, revs) =>
+          remoteMode() ? viaHost<StepsFile>('POST', '/actions', { sets, revs }) : saveStepsHere(sets, revs, `Claude Desktop on ${thisMachine()}`),
+        stateNames: () => allStates.map((s) => s.name)
       },
       join(app.getPath('userData'), 'mcp.json')
     )
